@@ -25,6 +25,7 @@ const app = express();
 const allowedOrigins = new Set(
     [
         process.env.FRONTEND_ORIGIN,
+        "https://cricket-scorebook.vercel.app",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
