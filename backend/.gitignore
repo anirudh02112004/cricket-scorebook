@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Environment Variables
+.env
+.env.*
+
+# Firebase Admin Secrets
+firebase/
+firebase/*.json
+serviceAccountKey.json
+
+# Logs
+logs/
+*.log
+
+# Runtime
+tmp/
+temp/
+
+# Coverage
+coverage/
+
+# OS
+.DS_Store
+Thumbs.db
