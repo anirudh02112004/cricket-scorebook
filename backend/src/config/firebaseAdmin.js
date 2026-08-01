@@ -1,4 +1,5 @@
-const admin = require("firebase-admin");
+const { initializeApp, getApps, cert } = require("firebase-admin/app");
+const { getAuth } = require("firebase-admin/auth");
 
 let firebaseAuth = null;
 
@@ -11,13 +12,13 @@ function initializeFirebaseAdmin() {
         process.env.FIREBASE_SERVICE_ACCOUNT
     );
 
-    if (!admin.apps.length) {
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount),
+    if (!getApps().length) {
+        initializeApp({
+            credential: cert(serviceAccount),
         });
     }
 
-    firebaseAuth = admin.auth();
+    firebaseAuth = getAuth();
 
     return firebaseAuth;
 }
