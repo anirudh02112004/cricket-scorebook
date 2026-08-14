@@ -292,7 +292,7 @@ async function authMiddleware(req, res, next) {
         console.log("========== BACKEND ==========");
         console.log(req.method);
         console.log(req.originalUrl);
-        console.log(req.headers.authorization);
+        
 
         const authorization = req.headers.authorization || "";
         const [scheme, token] = authorization.split(" ");
@@ -313,7 +313,12 @@ async function authMiddleware(req, res, next) {
         console.log("Verifying Firebase Token...");
         const decodedToken = await firebaseAuth.verifyIdToken(token);
         console.log("Firebase verification successful");
-        console.log(decodedToken);
+        console.log("Firebase verification successful");
+        console.log({
+            uid: decodedToken.uid,
+            email: decodedToken.email,
+            name: decodedToken.name
+        });
         console.log("[auth] Received Firebase UID:", decodedToken.uid);
         const provisioned = await provisionUserFromToken(decodedToken);
 
