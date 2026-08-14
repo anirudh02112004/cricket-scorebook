@@ -1,19 +1,25 @@
 import axios from "axios";
 import { firebaseAuth } from "@/lib/firebase";
 
-const defaultApiBaseUrl = "http://localhost:5000/api";
-const apiBaseUrl =
-  process.env.NEXT_PUBLIC_API_BASE_URL ??
-  (process.env.NODE_ENV === "development" ? defaultApiBaseUrl : "");
+const developmentApiBaseUrl = "http://localhost:5000/api";
+const productionApiBaseUrl = "https://cricket-scorebook-njzy.onrender.com/api";
+const normalizeApiBaseUrl = (value: string) => {
+  const trimmed = value.replace(/\/$/, "");
+  return trimmed.endsWith("/api") ? trimmed : `${trimmed}/api`;
+};
 
-if (!apiBaseUrl) {
-  throw new Error(
-    "NEXT_PUBLIC_API_BASE_URL is not configured. Set it to the deployed Render backend URL.",
-  );
-}
+const apiBaseUrl = normalizeApiBaseUrl(
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+    (process.env.NODE_ENV === "development" ? developmentApiBaseUrl : productionApiBaseUrl)
+);
+
+export const getApiBaseUrl = () => apiBaseUrl;
 
 const assetBaseUrl =
-  process.env.NEXT_PUBLIC_ASSET_BASE_URL ?? "http://localhost:5000";
+  process.env.NEXT_PUBLIC_ASSET_BASE_URL ??
+  (process.env.NODE_ENV === "development"
+    ? "http://localhost:5000"
+    : "https://cricket-scorebook-njzy.onrender.com");
 
 const api = axios.create({
   baseURL: apiBaseUrl,

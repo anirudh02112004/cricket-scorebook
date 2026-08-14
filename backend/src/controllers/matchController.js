@@ -1,6 +1,7 @@
 const Ball = require("../models/Ball");
 
 const Match = require("../models/Match");
+const mongoose = require("mongoose");
 
 console.log("Match =", Match);
 console.log("Type =", typeof Match);
@@ -30,6 +31,36 @@ function normalizePlayerRef(value) {
     }
 
     return String(value);
+}
+
+function normalizeTeamPlayers(team) {
+    if (!team || !Array.isArray(team.players)) {
+        return [];
+    }
+
+    return team.players.map(normalizePlayerRef).filter(Boolean);
+}
+
+function findDuplicateIds(ids) {
+    const seen = new Set();
+    const duplicates = new Set();
+
+    for (const id of ids) {
+        if (seen.has(id)) {
+            duplicates.add(id);
+        } else {
+            seen.add(id);
+        }
+    }
+
+    return [...duplicates];
+}
+
+function buildMatchCreateValidationError(message) {
+    return {
+        success: false,
+        message
+    };
 }
 
 async function resolvePlayerOfMatch(match) {
@@ -155,6 +186,14 @@ function isPlayerInTeam(team, playerId) {
 
 async function createMatch(req,res){
     try{
+        console.log("[match:create] request received");
+        console.log("[match:create] authenticated firebaseUid:", req.auth?.firebaseUid || req.user?.firebaseUid || null);
+        console.log("[match:create] authenticated player:", req.player ? {
+            _id: String(req.player._id),
+            name: req.player.name
+        } : null);
+        console.log("[match:create] request body:", req.body);
+
         const{
             matchDate,
             tossWinner,
@@ -162,41 +201,135 @@ async function createMatch(req,res){
             teamA,
             teamB,
             totalOvers
-        }=req.body;
-        if(!teamA || !teamB || !electedTo || !totalOvers || !tossWinner){
-            return res.status(400).json({
-                success:false,
-                message:"Missing required fields"
-            });
-        }
-        if (teamA.players.length < 2 || teamB.players.length < 2) {
+        } = req.body || {};
 
-            return res.status(400).json({
-            success: false,
-            message: "Each team must have at least 2 players"
-            });
+        const normalizedTeamAPlayers = normalizeTeamPlayers(teamA);
+        const normalizedTeamBPlayers = normalizeTeamPlayers(teamB);
 
+        if (!teamA || !teamB) {
+            return res.status(400).json(buildMatchCreateValidationError("Team A and Team B are required"));
         }
-        
+
+        if (!Array.isArray(teamA.players) || !Array.isArray(teamB.players)) {
+            return res.status(400).json(buildMatchCreateValidationError("Team A and Team B must include player arrays"));
+        }
+
+        if (normalizedTeamAPlayers.length < 6 || normalizedTeamBPlayers.length < 6) {
+            return res.status(400).json(buildMatchCreateValidationError("Each team must have at least 6 players"));
+        }
+
+        if (normalizedTeamAPlayers.length > 11 || normalizedTeamBPlayers.length > 11) {
+            return res.status(400).json(buildMatchCreateValidationError("Each team must have no more than 11 players"));
+        }
+
+        if (!tossWinner) {
+            return res.status(400).json(buildMatchCreateValidationError("Toss winner is required"));
+        }
+
+        if (!electedTo) {
+            return res.status(400).json(buildMatchCreateValidationError("Toss decision is required"));
+        }
+
+        if (!["A", "B"].includes(tossWinner)) {
+            return res.status(400).json(buildMatchCreateValidationError("Toss winner must be either A or B"));
+        }
+
+        if (!["Batting", "Bowling"].includes(electedTo)) {
+            return res.status(400).json(buildMatchCreateValidationError("Toss decision must be either Batting or Bowling"));
+        }
+
+        const parsedTotalOvers = Number(totalOvers);
+        if (!Number.isInteger(parsedTotalOvers) || parsedTotalOvers < 1) {
+            return res.status(400).json(buildMatchCreateValidationError("totalOvers must be a whole number greater than 0"));
+        }
+
+        const teamADuplicateIds = findDuplicateIds(normalizedTeamAPlayers);
+        if (teamADuplicateIds.length > 0) {
+            return res.status(400).json(buildMatchCreateValidationError(`Team A contains duplicate player IDs: ${teamADuplicateIds.join(", ")}`));
+        }
+
+        const teamBDuplicateIds = findDuplicateIds(normalizedTeamBPlayers);
+        if (teamBDuplicateIds.length > 0) {
+            return res.status(400).json(buildMatchCreateValidationError(`Team B contains duplicate player IDs: ${teamBDuplicateIds.join(", ")}`));
+        }
+
+        const overlappingPlayerIds = normalizedTeamAPlayers.filter((playerId) =>
+            normalizedTeamBPlayers.includes(playerId)
+        );
+
+        if (overlappingPlayerIds.length > 0) {
+            return res.status(400).json(buildMatchCreateValidationError(`The same player cannot be selected for both teams: ${overlappingPlayerIds.join(", ")}`));
+        }
+
+        const allPlayerIds = [...new Set([
+            ...normalizedTeamAPlayers,
+            ...normalizedTeamBPlayers
+        ])];
+
+        const invalidObjectIdPlayerIds = allPlayerIds.filter((playerId) => !mongoose.Types.ObjectId.isValid(playerId));
+        if (invalidObjectIdPlayerIds.length > 0) {
+            return res.status(400).json(buildMatchCreateValidationError(`Invalid player IDs: ${invalidObjectIdPlayerIds.join(", ")}`));
+        }
+
+        const existingPlayers = await Player.find({
+            _id: { $in: allPlayerIds },
+            isActive: true
+        }).select("_id name isActive");
+
+        const existingPlayerIds = new Set(existingPlayers.map((player) => String(player._id)));
+        const missingPlayerIds = allPlayerIds.filter((playerId) => !existingPlayerIds.has(playerId));
+        if (missingPlayerIds.length > 0) {
+            return res.status(400).json(buildMatchCreateValidationError(`Selected players do not exist or are inactive: ${missingPlayerIds.join(", ")}`));
+        }
+
+        const parsedMatchDate = matchDate ? new Date(matchDate) : undefined;
+        if (matchDate && Number.isNaN(parsedMatchDate.getTime())) {
+            return res.status(400).json(buildMatchCreateValidationError("matchDate must be a valid date"));
+        }
+
+        console.log("[match:create] Team A:", normalizedTeamAPlayers);
+        console.log("[match:create] Team B:", normalizedTeamBPlayers);
+        console.log("[match:create] toss winner:", tossWinner);
+        console.log("[match:create] toss decision:", electedTo);
+        console.log("[match:create] creating match...");
+
         const match = await Match.create({
-            matchDate,
+            ...(parsedMatchDate ? { matchDate: parsedMatchDate } : {}),
             tossWinner,
             electedTo,
             teamA,
             teamB,
             createdBy: req.user?._id || null,
             rules: {
-                maxOvers: totalOvers
+                maxOvers: parsedTotalOvers
             }
+        });
+        console.log("[match:create] match saved:", {
+            _id: String(match._id),
+            createdBy: match.createdBy ? String(match.createdBy) : null,
+            status: match.status,
+            tossWinner: match.tossWinner,
+            electedTo: match.electedTo,
+            maxOvers: match.rules?.maxOvers,
+            teamAPlayers: (match.teamA?.players || []).map((playerId) => String(playerId)),
+            teamBPlayers: (match.teamB?.players || []).map((playerId) => String(playerId))
+        });
+        console.log("[match:create] returning response:", {
+            success: true,
+            matchId: String(match._id)
         });
         res.status(201).json({
             success:true,
+            message:"Match created successfully",
+            matchId:String(match._id),
             match
         });
     } catch (error) {
+        console.error("[match:create] failed:", error);
         res.status(500).json({ 
             success:false,
-            message: error.message 
+            message: error.message,
+            error: error.message
         });
     }
 }

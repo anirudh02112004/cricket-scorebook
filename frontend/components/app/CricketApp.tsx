@@ -2,6 +2,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars, react-hooks/set-state-in-effect, @next/next/no-img-element */
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   FormEvent,
   ReactNode,
@@ -33,8 +34,10 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { cricketApi, messageOf, resolveAssetUrl } from "@/services/api";
+import toast from "react-hot-toast";
+import { cricketApi, getApiBaseUrl, messageOf, resolveAssetUrl } from "@/services/api";
 import { useAuth } from "@/context/AuthContext";
+import { firebaseAuth } from "@/lib/firebase";
 import GlassCard from "@/components/ui/GlassCard";
 import LiveBadge from "@/components/ui/LiveBadge";
 import PrimaryButton from "@/components/ui/PrimaryButton";
@@ -890,6 +893,7 @@ function PlayersView({
   invoke: (action: () => Promise<any>, success: string) => Promise<void>;
 }) {
   const { player: authPlayer } = useAuth();
+  const router = useRouter();
   const [showPlayerForm, setShowPlayerForm] = useState(false);
   const [editingPlayer, setEditingPlayer] = useState<any | null>(null);
   const [playerDraft, setPlayerDraft] = useState({
@@ -909,6 +913,7 @@ function PlayersView({
   const [tossWinner, setTossWinner] = useState<"A" | "B">("A");
   const [electedTo, setElectedTo] = useState<"Batting" | "Bowling">("Batting");
   const [matchFormError, setMatchFormError] = useState("");
+  const [savingMatch, setSavingMatch] = useState(false);
   const [deletePlayer, setDeletePlayer] = useState<any | null>(null);
 
   useEffect(() => {
@@ -978,6 +983,10 @@ function PlayersView({
     event.preventDefault();
     setMatchFormError("");
 
+    if (savingMatch) {
+      return;
+    }
+
     const teamAPlayers = players
       .filter((player) => selectedTeamA.includes(player._id))
       .map((player) => player._id);
@@ -990,27 +999,64 @@ function PlayersView({
       return;
     }
 
-    await invoke(
-      () =>
-        cricketApi.createMatch({
-          matchDate: matchDate || undefined,
-          tossWinner,
-          electedTo,
-          totalOvers,
-          teamA: { teamName: teamAName, players: teamAPlayers },
-          teamB: { teamName: teamBName, players: teamBPlayers },
-        }),
-      "Match created",
-    );
+    const payload = {
+      matchDate: matchDate || undefined,
+      tossWinner,
+      electedTo,
+      totalOvers,
+      teamA: { teamName: teamAName, players: teamAPlayers },
+      teamB: { teamName: teamBName, players: teamBPlayers },
+    };
 
-    setSelectedTeamA([]);
-    setSelectedTeamB([]);
-    setMatchDate("");
-    setTotalOvers(8);
-    setTeamAName("Team A");
-    setTeamBName("Team B");
-    setTossWinner("A");
-    setElectedTo("Batting");
+    const requestUrl = `${getApiBaseUrl().replace(/\/$/, "")}/matches`;
+    console.log("[match:create] method:", "POST");
+    console.log("[match:create] url:", requestUrl);
+    console.log("[match:create] body:", payload);
+
+    setSavingMatch(true);
+
+    try {
+      const firebaseToken = firebaseAuth.currentUser
+        ? await firebaseAuth.currentUser.getIdToken(true)
+        : null;
+      console.log("[match:create] Firebase bearer token exists:", Boolean(firebaseToken));
+      if (firebaseToken) {
+        console.log("[match:create] Firebase bearer token length:", firebaseToken.length);
+      }
+
+      const response = await cricketApi.createMatch(payload);
+
+      console.log("[match:create] response status:", response.status);
+      console.log("[match:create] response body:", response.data);
+
+      const createdMatchId = response.data?.match?._id ?? response.data?.matchId;
+      if (!createdMatchId) {
+        throw new Error("Backend did not return a match ID");
+      }
+
+      toast.success("Match saved successfully");
+
+      setSelectedTeamA([]);
+      setSelectedTeamB([]);
+      setMatchDate("");
+      setTotalOvers(8);
+      setTeamAName("Team A");
+      setTeamBName("Team B");
+      setTossWinner("A");
+      setElectedTo("Batting");
+      setMatchFormError("");
+
+      router.push(`/scoring?id=${createdMatchId}`);
+    } catch (error) {
+      console.error("[match:create] request failed:", error);
+      const reason = messageOf(error);
+      console.error("[match:create] failure reason:", reason);
+      const errorMessage = `Failed to save match: ${reason}`;
+      setMatchFormError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setSavingMatch(false);
+    }
   };
 
   const activeMatches = matches.filter((match) => match.status !== "Completed");
@@ -1279,13 +1325,14 @@ function PlayersView({
             <PrimaryButton
               type="submit"
               disabled={
+                savingMatch ||
                 selectedTeamA.length < 6 ||
                 selectedTeamA.length > 11 ||
                 selectedTeamB.length < 6 ||
                 selectedTeamB.length > 11
               }
             >
-              Save match
+              {savingMatch ? "Saving Match..." : "Save Match"}
             </PrimaryButton>
           </div>
         </form>
@@ -2317,14 +2364,14 @@ function ScoringView({
     [bundle, matchId],
   );
 
-  const openSetup = () => {
+  function openSetup() {
     setFeedback("");
     setSetupOpen(true);
     setSetupStage("striker");
     setOpeningStrikerId("");
     setOpeningNonStrikerId("");
     setOpeningBowlerId("");
-  };
+  }
 
   const startMatch = async () => {
     if (!matchId || !openingStrikerId || !openingNonStrikerId || !openingBowlerId) return;

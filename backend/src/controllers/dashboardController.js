@@ -3,12 +3,15 @@ const Player = require("../models/Player");
 
 async function getDashboard(req, res) {
     try {
+        const activePlayerFilter = {
+            isActive: true
+        };
 
         const liveMatch = await Match.findOne({
             status: "In Progress"
         });
 
-        const totalPlayers = await Player.countDocuments();
+        const totalPlayers = await Player.countDocuments(activePlayerFilter);
 
         const totalMatches = await Match.countDocuments();
 
@@ -27,14 +30,14 @@ async function getDashboard(req, res) {
         .limit(5);
 
         const topRunScorer = await Player
-            .findOne()
+            .findOne(activePlayerFilter)
             .sort({
                 "career.batting.runs": -1
             })
             .select("name career.batting.runs");
 
         const topWicketTaker = await Player
-            .findOne()
+            .findOne(activePlayerFilter)
             .sort({
                 "career.bowling.wickets": -1
             })
