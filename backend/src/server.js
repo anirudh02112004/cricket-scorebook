@@ -7,16 +7,11 @@ const connectDB = require("./config/db");
 const playerRoutes = require("./routes/playerRoutes");
 const matchRoutes = require("./routes/matchRoutes");
 const authRoutes = require("./routes/authRoutes");
-
 const dashboardRoutes = require("./routes/dashboardRoutes");
-
 const searchRoutes = require("./routes/searchRoutes");
-
 const scoreRoutes = require("./routes/scoreRoutes");
+
 console.log("✅ Score routes loaded");
-
-
-
 
 dotenv.config();
 
@@ -52,22 +47,12 @@ app.use(cors({
 app.use(express.json());
 app.use("/images", express.static(path.join(__dirname, "..", "images")));
 
-connectDB();
-
 app.use("/api/players", playerRoutes);
 app.use("/api/matches", matchRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/score", scoreRoutes);
 app.use("/api/search", searchRoutes);
-
-
-
 app.use("/api/dashboard", dashboardRoutes);
-
-
-
-// Later
-// app.use("/api/score", scoreRoutes);
 
 app.get("/", (req, res) => {
     res.json({
@@ -77,6 +62,16 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+async function startServer() {
+    await connectDB();
+
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}
+
+startServer().catch((error) => {
+    console.error("[server] Failed to start");
+    console.error(error);
+    process.exit(1);
 });

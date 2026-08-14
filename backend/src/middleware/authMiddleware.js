@@ -3,6 +3,10 @@ const Player = require("../models/Player");
 const mongoose = require("mongoose");
 const { initializeFirebaseAdmin } = require("../config/firebaseAdmin");
 
+function logProvision(step, payload) {
+    console.log(`[auth][provision] ${step}`, payload);
+}
+
 function normalizePhoto(decodedToken) {
     return decodedToken.picture || decodedToken.photoURL || null;
 }
@@ -15,113 +19,270 @@ function normalizeName(decodedToken) {
     );
 }
 
+function serializeError(error) {
+    return {
+        name: error?.name || "Error",
+        message: error?.message || String(error),
+        code: error?.code || null,
+        keyValue: error?.keyValue || null,
+        stack: error?.stack || null
+    };
+}
+
+function normalizeRef(value) {
+    if (!value) {
+        return null;
+    }
+
+    if (typeof value === "object") {
+        return String(value._id || value.id || "");
+    }
+
+    return String(value);
+}
+
 async function provisionUserFromToken(decodedToken) {
     const firebaseUid = decodedToken.uid;
     const email = String(decodedToken.email || `${firebaseUid}@firebase.local`).toLowerCase();
     const name = normalizeName(decodedToken);
     const photoURL = normalizePhoto(decodedToken);
 
-    let user = await User.findOne({ firebaseUid }).populate("player");
+    logProvision("Received Firebase UID", {
+        firebaseUid,
+        email,
+        name,
+        hasPhotoURL: Boolean(photoURL)
+    });
 
-    if (user?.player) {
-        const player = await Player.findById(user.player._id);
+    const session = await mongoose.startSession();
 
-        if (player) {
-            player.name = player.name || name;
-            player.email = player.email || email;
-            player.firebaseUid = player.firebaseUid || firebaseUid;
-            if (!player.profileImage && photoURL) {
-                player.profileImage = photoURL;
+    try {
+        let provisionedUser = null;
+        let provisionedPlayer = null;
+
+        await session.withTransaction(async () => {
+            let user = await User.findOne({ firebaseUid })
+                .populate("player")
+                .session(session);
+
+            logProvision("Existing User", user ? {
+                _id: String(user._id),
+                firebaseUid: user.firebaseUid,
+                email: user.email,
+                player: normalizeRef(user.player)
+            } : null);
+
+            let player = null;
+
+            const linkedPlayerId = normalizeRef(user?.player);
+            if (linkedPlayerId) {
+                player = await Player.findById(linkedPlayerId).session(session);
             }
-            if (!player.user) {
+
+            if (!player) {
+                player =
+                    (await Player.findOne({ firebaseUid }).session(session)) ||
+                    (await Player.findOne({ email }).session(session));
+            }
+
+            logProvision("Existing Player", player ? {
+                _id: String(player._id),
+                user: normalizeRef(player.user),
+                email: player.email,
+                firebaseUid: player.firebaseUid
+            } : null);
+
+            if (!user && !player) {
+                const userId = new mongoose.Types.ObjectId();
+                const playerId = new mongoose.Types.ObjectId();
+
+                logProvision("Creating Player", {
+                    _id: String(playerId),
+                    user: String(userId),
+                    email,
+                    firebaseUid
+                });
+
+                player = new Player({
+                    _id: playerId,
+                    user: userId,
+                    name,
+                    role: "All-Rounder",
+                    battingStyle: "Right Hand",
+                    bowlingStyle: "Right Arm",
+                    profileImage: photoURL,
+                    email,
+                    firebaseUid
+                });
+
+                logProvision("Saving Player", {
+                    _id: String(player._id),
+                    user: normalizeRef(player.user)
+                });
+                await player.save({ session });
+
+                logProvision("Creating User", {
+                    _id: String(userId),
+                    player: String(player._id),
+                    email,
+                    firebaseUid
+                });
+
+                user = new User({
+                    _id: userId,
+                    firebaseUid,
+                    name,
+                    email,
+                    photoURL,
+                    player: player._id,
+                    role: "player"
+                });
+
+                logProvision("Saving User", {
+                    _id: String(user._id),
+                    player: normalizeRef(user.player)
+                });
+                await user.save({ session });
+
                 player.user = user._id;
+                logProvision("Saving Player", {
+                    _id: String(player._id),
+                    user: normalizeRef(player.user)
+                });
+                await player.save({ session });
+            } else if (user && player) {
+                user.name = user.name || name;
+                user.email = user.email || email;
+                user.photoURL = user.photoURL || photoURL;
+                user.player = player._id;
+
+                player.name = player.name || name;
+                player.email = player.email || email;
+                player.firebaseUid = player.firebaseUid || firebaseUid;
+                player.role = player.role || "All-Rounder";
+                player.battingStyle = player.battingStyle || "Right Hand";
+                player.bowlingStyle = player.bowlingStyle || "Right Arm";
+                if (!player.profileImage && photoURL) {
+                    player.profileImage = photoURL;
+                }
+                if (!player.user) {
+                    player.user = user._id;
+                }
+
+                logProvision("Saving User", {
+                    _id: String(user._id),
+                    player: normalizeRef(user.player)
+                });
+                await user.save({ session });
+
+                logProvision("Saving Player", {
+                    _id: String(player._id),
+                    user: normalizeRef(player.user)
+                });
+                await player.save({ session });
+            } else if (user && !player) {
+                const playerId = new mongoose.Types.ObjectId();
+
+                logProvision("Creating Player", {
+                    _id: String(playerId),
+                    user: String(user._id),
+                    email,
+                    firebaseUid
+                });
+
+                player = new Player({
+                    _id: playerId,
+                    user: user._id,
+                    name,
+                    role: "All-Rounder",
+                    battingStyle: "Right Hand",
+                    bowlingStyle: "Right Arm",
+                    profileImage: photoURL,
+                    email,
+                    firebaseUid
+                });
+
+                logProvision("Saving Player", {
+                    _id: String(player._id),
+                    user: normalizeRef(player.user)
+                });
+                await player.save({ session });
+
+                user.name = user.name || name;
+                user.email = user.email || email;
+                user.photoURL = user.photoURL || photoURL;
+                user.player = player._id;
+
+                logProvision("Saving User", {
+                    _id: String(user._id),
+                    player: normalizeRef(user.player)
+                });
+                await user.save({ session });
+            } else if (!user && player) {
+                const userId = new mongoose.Types.ObjectId();
+
+                logProvision("Creating User", {
+                    _id: String(userId),
+                    player: String(player._id),
+                    email,
+                    firebaseUid
+                });
+
+                user = new User({
+                    _id: userId,
+                    firebaseUid,
+                    name,
+                    email,
+                    photoURL,
+                    player: player._id,
+                    role: "player"
+                });
+
+                logProvision("Saving User", {
+                    _id: String(user._id),
+                    player: normalizeRef(user.player)
+                });
+                await user.save({ session });
+
+                player.name = player.name || name;
+                player.email = player.email || email;
+                player.firebaseUid = player.firebaseUid || firebaseUid;
+                player.role = player.role || "All-Rounder";
+                player.battingStyle = player.battingStyle || "Right Hand";
+                player.bowlingStyle = player.bowlingStyle || "Right Arm";
+                if (!player.profileImage && photoURL) {
+                    player.profileImage = photoURL;
+                }
+                player.user = user._id;
+
+                logProvision("Saving Player", {
+                    _id: String(player._id),
+                    user: normalizeRef(player.user)
+                });
+                await player.save({ session });
             }
-            await player.save();
-            user.name = user.name || name;
-            user.email = user.email || email;
-            user.photoURL = user.photoURL || photoURL;
-            user.player = player._id;
-            await user.save();
-            user.player = player;
-            return { user, player };
-        }
-    }
 
-    let player =
-        (await Player.findOne({ firebaseUid })) ||
-        (await Player.findOne({ email }));
+            provisionedUser = user;
+            provisionedPlayer = player;
 
-    if (!player) {
-        const userId = new mongoose.Types.ObjectId();
-        const playerId = new mongoose.Types.ObjectId();
-
-        player = await Player.create({
-            _id: playerId,
-            user: userId,
-            name,
-            role: "All-Rounder",
-            battingStyle: "Right Hand",
-            bowlingStyle: "Right Arm",
-            profileImage: photoURL,
-            email,
-            firebaseUid
+            logProvision("Returning User", {
+                userId: provisionedUser ? String(provisionedUser._id) : null,
+                playerId: provisionedPlayer ? String(provisionedPlayer._id) : null,
+                firebaseUid
+            });
         });
 
-        user = await User.create({
-            _id: userId,
-            firebaseUid,
-            name,
-            email,
-            photoURL,
-            player: playerId,
-            role: "player"
-        });
-
-        player.user = user._id;
-        await player.save();
-
-        return { user, player };
-    } else {
-        player.name = player.name || name;
-        player.email = player.email || email;
-        player.firebaseUid = player.firebaseUid || firebaseUid;
-        player.role = player.role || "All-Rounder";
-        player.battingStyle = player.battingStyle || "Right Hand";
-        player.bowlingStyle = player.bowlingStyle || "Right Arm";
-        if (!player.profileImage && photoURL) {
-            player.profileImage = photoURL;
-        }
-        await player.save();
+        return {
+            user: provisionedUser,
+            player: provisionedPlayer
+        };
+    } catch (error) {
+        console.error("[auth][provision] Failed");
+        console.error(serializeError(error));
+        throw error;
+    } finally {
+        session.endSession();
     }
-
-    user = await User.findOneAndUpdate(
-        { firebaseUid },
-        {
-            $set: {
-                firebaseUid,
-                name,
-                email,
-                photoURL,
-                player: player._id,
-                role: "player"
-            }
-        },
-        {
-            new: true,
-            upsert: true,
-            runValidators: true
-        }
-    ).populate("player");
-
-    player.user = user._id;
-    player.email = email;
-    player.firebaseUid = firebaseUid;
-    if (!player.profileImage && photoURL) {
-        player.profileImage = photoURL;
-    }
-    await player.save();
-
-    return { user, player };
 }
 
 async function authMiddleware(req, res, next) {
@@ -153,6 +314,7 @@ async function authMiddleware(req, res, next) {
         const decodedToken = await firebaseAuth.verifyIdToken(token);
         console.log("Firebase verification successful");
         console.log(decodedToken);
+        console.log("[auth] Received Firebase UID:", decodedToken.uid);
         const provisioned = await provisionUserFromToken(decodedToken);
 
         req.auth = {
@@ -169,10 +331,14 @@ async function authMiddleware(req, res, next) {
         console.error("========== AUTH ERROR ==========");
         console.error(error);
         console.error(error.stack);
-        return res.status(401).json({
+        const status = error?.code === 11000 ? 409 : 500;
+        return res.status(status).json({
             success: false,
             message: error?.message || "Unauthorized",
-            error: error?.stack || error?.message || String(error)
+            error: error?.stack || error?.message || String(error),
+            code: error?.code || null,
+            keyValue: error?.keyValue || null,
+            status
         });
     }
 }
