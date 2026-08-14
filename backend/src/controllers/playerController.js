@@ -63,8 +63,18 @@ async function getPlayerByID(req,res){
 
 async function getAllPlayers(req,res){
     try{
+        console.log("[players:list] ROUTE HANDLER START");
+        console.log("[players:list] MONGODB QUERY START", {
+            isActive: true
+        });
         const players = await Player.find({
             isActive:true
+        });
+        console.log("[players:list] MONGODB QUERY COMPLETE", {
+            count: players.length
+        });
+        console.log("[players:list] RESPONSE SENT", {
+            status: 200
         });
         res.status(200).json({
             success:true,
@@ -72,6 +82,9 @@ async function getAllPlayers(req,res){
             players
         });
     }catch(error){
+        console.error("[players:list] FAILED", {
+            message: error.message
+        });
         res.status(500).json({
             success:false,
             error:error.message

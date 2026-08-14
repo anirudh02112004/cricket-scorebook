@@ -408,7 +408,15 @@ async function generateTeams(req,res){
 
 async function getAllMatches(req, res) {
     try {
+        console.log("[matches:list] ROUTE HANDLER START");
+        console.log("[matches:list] MONGODB QUERY START");
         const matches = await Match.find();
+        console.log("[matches:list] MONGODB QUERY COMPLETE", {
+            count: matches.length
+        });
+        console.log("[matches:list] RESPONSE SENT", {
+            status: 200
+        });
 
         return res.status(200).json({
             success: true,
@@ -478,6 +486,9 @@ async function deleteMatch(req, res) {
             message: "Match deleted successfully"
         });
     } catch (error) {
+        console.error("[matches:list] FAILED", {
+            message: error.message
+        });
         return res.status(500).json({
             success: false,
             message: error.message

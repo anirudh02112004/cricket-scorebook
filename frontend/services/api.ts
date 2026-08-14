@@ -27,28 +27,39 @@ const api = axios.create({
 });
 
 let authToken = "";
+let requestCounter = 0;
 
 console.log("[api] baseURL:", apiBaseUrl);
 
 api.interceptors.request.use(async (config) => {
-  console.log("========== AXIOS ==========");
-  console.log(config.method);
-  console.log(config.url);
-  console.log(config.headers);
+  const requestId = ++requestCounter;
+  const method = String(config.method || "GET").toUpperCase();
+  const url = `${String(config.baseURL || "")}${String(config.url || "")}`;
+  const cachedToken = authToken;
+  const currentUserPresent = Boolean(firebaseAuth.currentUser);
+
+  console.log(`[api][${requestId}] REQUEST START`);
+  console.log(`[api][${requestId}] REQUEST URL`, url);
+  console.log(`[api][${requestId}] METHOD`, method);
+  console.log(`[api][${requestId}] TOKEN AVAILABLE`, Boolean(cachedToken));
+  console.log(`[api][${requestId}] TOKEN LENGTH`, cachedToken ? cachedToken.length : 0);
 
   const protectedPath = Boolean(config.url && !String(config.url).startsWith("/search"));
-  let token = authToken;
+  let token = cachedToken;
 
-  if (firebaseAuth.currentUser) {
+  if (currentUserPresent) {
     token = await firebaseAuth.currentUser.getIdToken(true);
     authToken = token;
   }
 
+  const authHeaderAttached = Boolean(token);
   if (token) {
     config.headers = Object.assign({}, config.headers, {
       Authorization: `Bearer ${token}`,
     }) as typeof config.headers;
   }
+
+  console.log(`[api][${requestId}] AUTH HEADER ATTACHED`, authHeaderAttached);
 
   if (protectedPath) {
     const outgoingAuthorization = token ? `Bearer ${token}` : "<missing>";
@@ -57,11 +68,49 @@ api.interceptors.request.use(async (config) => {
     );
   }
 
+  (config as typeof config & { metadata?: Record<string, unknown> }).metadata = {
+    requestId,
+    startedAt: Date.now(),
+  };
+
   return config;
 });
 
+api.interceptors.response.use(
+  (response) => {
+    const metadata = response.config.metadata as
+      | { requestId?: number; startedAt?: number }
+      | undefined;
+    const requestId = metadata?.requestId ?? 0;
+    const elapsedMs = metadata?.startedAt ? Date.now() - metadata.startedAt : 0;
+    console.log(`[api][${requestId}] REQUEST COMPLETED`, {
+      status: response.status,
+      url: response.config.url,
+      method: String(response.config.method || "GET").toUpperCase(),
+      elapsedMs,
+    });
+    return response;
+  },
+  (error) => {
+    const config = error?.config as
+      | ({ metadata?: { requestId?: number; startedAt?: number } } & Record<string, unknown>)
+      | undefined;
+    const requestId = config?.metadata?.requestId ?? 0;
+    const elapsedMs = config?.metadata?.startedAt ? Date.now() - config.metadata.startedAt : 0;
+    console.error(`[api][${requestId}] REQUEST FAILED`, {
+      status: error?.response?.status ?? null,
+      url: config?.url ?? null,
+      method: String(config?.method || "GET").toUpperCase(),
+      elapsedMs,
+      message: error?.message ?? String(error),
+    });
+    return Promise.reject(error);
+  },
+);
+
 export const setApiAuthToken = (token?: string | null) => {
   authToken = token || "";
+  console.log("[api] auth token cached:", Boolean(authToken), "length:", authToken.length);
   if (authToken) {
     api.defaults.headers.common.Authorization = `Bearer ${authToken}`;
   } else {

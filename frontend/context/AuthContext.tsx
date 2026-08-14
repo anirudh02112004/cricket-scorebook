@@ -41,6 +41,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [player, setPlayer] = useState<any | null>(null);
 
   const syncWithBackend = async (nextUser: User, forceRefresh = false) => {
+    console.log("[auth] syncWithBackend start", {
+      uid: nextUser.uid,
+      forceRefresh,
+      hasCurrentUser: Boolean(firebaseAuth.currentUser),
+    });
     const idToken = await nextUser.getIdToken(forceRefresh);
     console.log("========== STEP 2 ==========");
     console.log("Firebase Token:");
@@ -57,7 +62,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.log("Calling backend...");
         console.log("Authorization Header:");
         console.log(`Bearer ${idToken}`);
+        console.log("[auth] REQUEST START /auth/me");
         const response = await cricketApi.authMe();
+        console.log("[auth] REQUEST COMPLETED /auth/me", {
+          status: response.status,
+        });
         setUser(response.data.user ?? null);
         setPlayer(response.data.player ?? response.data.user?.player ?? null);
         return;
@@ -75,6 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshSession = async () => {
     if (!firebaseAuth.currentUser) {
+      console.log("[auth] refreshSession skipped: no current user");
       setApiAuthToken(null);
       setToken(null);
       setUser(null);
@@ -88,6 +98,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (nextUser) => {
       try {
+        console.log("[auth] onAuthStateChanged", {
+          uid: nextUser?.uid ?? null,
+          email: nextUser?.email ?? null,
+          hasUser: Boolean(nextUser),
+        });
         setFirebaseUser(nextUser);
 
         if (!nextUser) {
@@ -105,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setPlayer(null);
       } finally {
+        console.log("[auth] loading complete");
         setLoading(false);
       }
     });

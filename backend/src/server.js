@@ -45,6 +45,16 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+app.use((req, res, next) => {
+    console.log("[request] REQUEST RECEIVED", {
+        method: req.method,
+        url: req.originalUrl,
+        authHeaderPresent: Boolean(req.headers.authorization)
+    });
+    next();
+});
+
 app.use("/images", express.static(path.join(__dirname, "..", "images")));
 
 app.use("/api/players", playerRoutes);

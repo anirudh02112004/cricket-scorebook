@@ -289,16 +289,15 @@ async function authMiddleware(req, res, next) {
     try {
         const firebaseAuth = initializeFirebaseAdmin();
 
-        console.log("========== BACKEND ==========");
-        console.log(req.method);
-        console.log(req.originalUrl);
-        
-
         const authorization = req.headers.authorization || "";
         const [scheme, token] = authorization.split(" ");
-        console.log("Scheme:", scheme);
-        console.log("Token exists:", !!token);
-        console.log("Token length:", token ? token.length : "NULL");
+        console.log("[auth middleware] AUTH MIDDLEWARE START", {
+            method: req.method,
+            url: req.originalUrl
+        });
+        console.log("[auth middleware] AUTH HEADER PRESENT", Boolean(authorization));
+        console.log("[auth middleware] TOKEN EXISTS", Boolean(token));
+        console.log("[auth middleware] TOKEN LENGTH", token ? token.length : 0);
 
         if (scheme !== "Bearer" || !token) {
             console.warn(`[auth] missing bearer token for ${req.method} ${req.originalUrl}`);
@@ -309,17 +308,16 @@ async function authMiddleware(req, res, next) {
         }
 
         const tokenParts = token.split(".");
-        console.log(`[auth] token parts=${tokenParts.length}, looksLikeJWT=${tokenParts.length === 3}`);
-        console.log("Verifying Firebase Token...");
+        console.log("[auth middleware] FIREBASE VERIFY START", {
+            tokenParts: tokenParts.length,
+            looksLikeJWT: tokenParts.length === 3
+        });
         const decodedToken = await firebaseAuth.verifyIdToken(token);
-        console.log("Firebase verification successful");
-        console.log("Firebase verification successful");
-        console.log({
+        console.log("[auth middleware] FIREBASE VERIFY SUCCESS", {
             uid: decodedToken.uid,
             email: decodedToken.email,
             name: decodedToken.name
         });
-        console.log("[auth] Received Firebase UID:", decodedToken.uid);
         const provisioned = await provisionUserFromToken(decodedToken);
 
         req.auth = {
@@ -333,8 +331,10 @@ async function authMiddleware(req, res, next) {
 
         return next();
     } catch (error) {
-        console.error("========== AUTH ERROR ==========");
-        console.error(error);
+        console.error("[auth middleware] FIREBASE VERIFY FAIL", {
+            message: error?.message || String(error),
+            code: error?.code || null
+        });
         console.error(error.stack);
         const status = error?.code === 11000 ? 409 : 500;
         return res.status(status).json({

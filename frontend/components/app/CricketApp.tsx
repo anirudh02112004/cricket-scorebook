@@ -469,6 +469,7 @@ export default function CricketApp({
   refreshToken?: number;
   onAction?: (action: () => Promise<any>, success: string) => Promise<void>;
 }) {
+  const { loading: authLoading } = useAuth();
   const [data, setData] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -481,14 +482,23 @@ export default function CricketApp({
     async function load() {
       setLoading(true);
       setError("");
+      console.log("[load] REQUEST START", {
+        page,
+        id: id ?? null,
+        refreshToken,
+        refreshKey,
+        authLoading,
+      });
 
       try {
         let nextData: Record<string, any> = {};
 
         if (page === "dashboard") {
+          console.log("[load] REQUEST URL /dashboard");
           const response = await cricketApi.dashboard();
           nextData = response.data.dashboard ?? {};
         } else if (page === "players") {
+          console.log("[load] REQUEST URL /players + /matches");
           const [playersRes, matchesRes] = await Promise.all([
             cricketApi.players(),
             cricketApi.matches(),
@@ -528,7 +538,16 @@ export default function CricketApp({
         }
 
         if (!ignore) setData(nextData);
+        console.log("[load] REQUEST COMPLETED", {
+          page,
+          id: id ?? null,
+        });
       } catch (err) {
+        console.error("[load] REQUEST FAILED", {
+          page,
+          id: id ?? null,
+          message: messageOf(err),
+        });
         if (!ignore) setError(messageOf(err));
       } finally {
         if (!ignore) setLoading(false);
@@ -540,7 +559,7 @@ export default function CricketApp({
     return () => {
       ignore = true;
     };
-  }, [page, id, refreshToken, refreshKey]);
+  }, [page, id, refreshToken, refreshKey, authLoading]);
 
   const invoke = async (action: () => Promise<any>, success: string) => {
     try {
