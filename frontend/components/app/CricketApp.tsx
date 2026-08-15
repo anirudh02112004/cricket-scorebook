@@ -170,6 +170,44 @@ const currentOverChipLabel = (ball: any) => {
   return String(runsOffBat);
 };
 
+function resolveCurrentBatters(match: any, scoreboard: any) {
+  return {
+    striker: scoreboard?.striker ?? match?.matchState?.striker ?? null,
+    nonStriker: scoreboard?.nonStriker ?? match?.matchState?.nonStriker ?? null,
+    bowler: scoreboard?.bowler ?? match?.matchState?.currentBowler ?? null,
+  };
+}
+
+function resolvePartnershipView(partnership: any, striker: any, nonStriker: any) {
+  if (!partnership) {
+    return { striker: null, nonStriker: null };
+  }
+
+  const partnershipStriker = partnership.striker;
+  const partnershipNonStriker = partnership.nonStriker;
+  const strikerName = String(striker?.name ?? "");
+  const nonStrikerName = String(nonStriker?.name ?? "");
+
+  const strikerView =
+    String(partnershipStriker?.name ?? "") === strikerName
+      ? partnershipStriker
+      : String(partnershipNonStriker?.name ?? "") === strikerName
+        ? partnershipNonStriker
+        : partnershipStriker ?? partnershipNonStriker ?? null;
+
+  const nonStrikerView =
+    String(partnershipNonStriker?.name ?? "") === nonStrikerName
+      ? partnershipNonStriker
+      : String(partnershipStriker?.name ?? "") === nonStrikerName
+        ? partnershipStriker
+        : partnershipNonStriker ?? partnershipStriker ?? null;
+
+  return {
+    striker: strikerView,
+    nonStriker: nonStrikerView,
+  };
+}
+
 function normalizeExtraType(value: unknown) {
   const normalized = String(value || "None").replace(/\s+/g, "").toLowerCase();
   if (normalized === "wide") return "Wide";
@@ -2421,16 +2459,24 @@ function ScoringView({
     [bundle.data.batting],
   );
 
-  const currentStrikerId = String(match?.matchState?.striker?._id ?? "");
-  const currentNonStrikerId = String(match?.matchState?.nonStriker?._id ?? "");
-  const currentBowlerName = match?.matchState?.currentBowler?.name ?? "Not set";
-  const currentPartnership = bundle.data.partnership ?? null;
-  const currentStrikerName =
-    currentPartnership?.striker?.name ?? match?.matchState?.striker?.name ?? "Striker";
-  const currentNonStrikerName =
-    currentPartnership?.nonStriker?.name ?? match?.matchState?.nonStriker?.name ?? "Non-striker";
+  const currentBatters = useMemo(
+    () => resolveCurrentBatters(match, bundle.data.scoreboard ?? {}),
+    [match, bundle.data.scoreboard],
+  );
+  const currentStrikerId = String(currentBatters.striker?._id ?? match?.matchState?.striker?._id ?? "");
+  const currentNonStrikerId = String(
+    currentBatters.nonStriker?._id ?? match?.matchState?.nonStriker?._id ?? "",
+  );
+  const currentBowlerName = currentBatters.bowler?.name ?? "Not set";
+  const currentStrikerName = currentBatters.striker?.name ?? "Striker";
+  const currentNonStrikerName = currentBatters.nonStriker?.name ?? "Non-striker";
   const currentOverBalls = bundle.data.currentOver?.balls ?? [];
   const currentOverNumber = bundle.data.currentOver?.over ?? battingTeam?.completedOvers ?? 0;
+  const currentPartnership = bundle.data.partnership ?? null;
+  const displayedPartnership = useMemo(
+    () => resolvePartnershipView(currentPartnership, currentBatters.striker, currentBatters.nonStriker),
+    [currentPartnership, currentBatters.striker, currentBatters.nonStriker],
+  );
   const currentBowlerStats = useMemo(
     () =>
       (bundle.data.bowling ?? []).find(
@@ -2944,11 +2990,11 @@ function ScoringView({
                       Striker
                     </p>
                     <p className="mt-1 text-lg font-black text-white">
-                      {currentPartnership?.striker?.name ?? match?.matchState?.striker?.name ?? "Not set"}
+                      {displayedPartnership.striker?.name ?? currentStrikerName}
                     </p>
                     <p className="text-sm text-slate-400">
-                      {currentPartnership?.striker
-                        ? `${currentPartnership.striker.runs ?? 0} (${currentPartnership.striker.balls ?? 0})`
+                      {displayedPartnership.striker
+                        ? `${displayedPartnership.striker.runs ?? 0} (${displayedPartnership.striker.balls ?? 0})`
                         : "—"}
                     </p>
                   </div>
@@ -2957,11 +3003,11 @@ function ScoringView({
                       Non-striker
                     </p>
                     <p className="mt-1 text-lg font-black text-white">
-                      {currentPartnership?.nonStriker?.name ?? match?.matchState?.nonStriker?.name ?? "Not set"}
+                      {displayedPartnership.nonStriker?.name ?? currentNonStrikerName}
                     </p>
                     <p className="text-sm text-slate-400">
-                      {currentPartnership?.nonStriker
-                        ? `${currentPartnership.nonStriker.runs ?? 0} (${currentPartnership.nonStriker.balls ?? 0})`
+                      {displayedPartnership.nonStriker
+                        ? `${displayedPartnership.nonStriker.runs ?? 0} (${displayedPartnership.nonStriker.balls ?? 0})`
                         : "—"}
                     </p>
                   </div>
@@ -3670,6 +3716,12 @@ function MatchCenter({
       : 0;
 
   const currentOver = data.currentOver?.balls ?? [];
+  const currentBatters = resolveCurrentBatters(match, scoreboard);
+  const displayedPartnership = resolvePartnershipView(
+    data.partnership ?? null,
+    currentBatters.striker,
+    currentBatters.nonStriker,
+  );
   const summary = data.summary ?? {};
   const recentBatting = data.batting ?? [];
   const recentBowling = data.bowling ?? [];
@@ -3841,17 +3893,16 @@ function MatchCenter({
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-2xl bg-white/5 p-4">
               <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Striker</p>
-              <p className="mt-1 font-bold text-white">{data.partnership?.striker?.name ?? "—"}</p>
+              <p className="mt-1 font-bold text-white">{displayedPartnership.striker?.name ?? "—"}</p>
               <p className="text-sm text-slate-400">
-                {data.partnership?.striker?.runs ?? 0} ({data.partnership?.striker?.balls ?? 0})
+                {displayedPartnership.striker?.runs ?? 0} ({displayedPartnership.striker?.balls ?? 0})
               </p>
             </div>
             <div className="rounded-2xl bg-white/5 p-4">
               <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Non-striker</p>
-              <p className="mt-1 font-bold text-white">{data.partnership?.nonStriker?.name ?? "—"}</p>
+              <p className="mt-1 font-bold text-white">{displayedPartnership.nonStriker?.name ?? "—"}</p>
               <p className="text-sm text-slate-400">
-                {data.partnership?.nonStriker?.runs ?? 0} (
-                {data.partnership?.nonStriker?.balls ?? 0})
+                {displayedPartnership.nonStriker?.runs ?? 0} ({displayedPartnership.nonStriker?.balls ?? 0})
               </p>
             </div>
           </div>
