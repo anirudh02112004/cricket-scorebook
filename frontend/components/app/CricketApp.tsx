@@ -154,6 +154,22 @@ const ballLabel = (ball: any) => {
   return runs === 0 ? "•" : String(runs);
 };
 
+const currentOverChipLabel = (ball: any) => {
+  if (!ball) return "•";
+
+  const extra = normalizeExtraType(ball.extraType);
+  const runsOffBat = Number(ball.runsOffBat ?? 0);
+  const extraRuns = Number(ball.extraRuns ?? 0);
+
+  if (ball.isWicket) return "W";
+  if (extra === "Wide") return extraRuns > 1 ? `WD+${extraRuns}` : "WD";
+  if (extra === "NoBall") return runsOffBat > 0 ? `NB+${runsOffBat}` : "NB";
+  if (extra === "Bye") return extraRuns > 0 ? `B${extraRuns}` : "B";
+  if (extra === "LegBye") return extraRuns > 0 ? `LB${extraRuns}` : "LB";
+
+  return String(runsOffBat);
+};
+
 function normalizeExtraType(value: unknown) {
   const normalized = String(value || "None").replace(/\s+/g, "").toLowerCase();
   if (normalized === "wide") return "Wide";
@@ -2408,9 +2424,13 @@ function ScoringView({
   const currentStrikerId = String(match?.matchState?.striker?._id ?? "");
   const currentNonStrikerId = String(match?.matchState?.nonStriker?._id ?? "");
   const currentBowlerName = match?.matchState?.currentBowler?.name ?? "Not set";
+  const currentPartnership = bundle.data.partnership ?? null;
+  const currentStrikerName =
+    currentPartnership?.striker?.name ?? match?.matchState?.striker?.name ?? "Striker";
+  const currentNonStrikerName =
+    currentPartnership?.nonStriker?.name ?? match?.matchState?.nonStriker?.name ?? "Non-striker";
   const currentOverBalls = bundle.data.currentOver?.balls ?? [];
   const currentOverNumber = bundle.data.currentOver?.over ?? battingTeam?.completedOvers ?? 0;
-  const currentPartnership = bundle.data.partnership ?? null;
   const currentBowlerStats = useMemo(
     () =>
       (bundle.data.bowling ?? []).find(
@@ -2463,12 +2483,6 @@ function ScoringView({
       setNoBallReason("");
     }
   }, [isNoBallSelected, noBallReason]);
-
-  useEffect(() => {
-    if (extraType !== "NoBall" && isBouncer) {
-      setIsBouncer(false);
-    }
-  }, [extraType, isBouncer]);
 
   const runAction = useCallback(
     async (action: () => Promise<any>, success: string) => {
@@ -2711,6 +2725,13 @@ function ScoringView({
       setFeedback("Select whether the striker or non-striker was run out");
       return;
     }
+    const completedRuns = Number(runsOffBat || 0);
+    const resolvedDismissedBatsmanId =
+      isWicket && dismissalType === "Run Out"
+        ? dismissedBatsmanPosition === "STRIKER"
+          ? currentStrikerId || undefined
+          : currentNonStrikerId || undefined
+        : undefined;
     const resolvedExtraType = extraType;
     const resolvedExtraRuns =
       resolvedExtraType === "Wide" || resolvedExtraType === "NoBall"
@@ -2732,10 +2753,15 @@ function ScoringView({
         extraRuns: resolvedExtraRuns,
         isWicket,
         dismissalType: isWicket ? dismissalType : undefined,
+        dismissedBatsman:
+          isWicket && dismissalType === "Run Out" ? resolvedDismissedBatsmanId : undefined,
         dismissedBatsmanPosition:
           isWicket && dismissalType === "Run Out"
             ? dismissedBatsmanPosition
             : undefined,
+        runsCompleted: isWicket && dismissalType === "Run Out" ? completedRuns : undefined,
+        battersCrossed:
+          isWicket && dismissalType === "Run Out" ? completedRuns % 2 === 1 : undefined,
         fielder: fielderId || undefined,
         isBouncer: resolvedIsBouncer,
         noBallReason: resolvedNoBallReason,
@@ -2863,6 +2889,27 @@ function ScoringView({
               </div>
             }
           >
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                  Striker
+                </p>
+                <p className="mt-1 text-sm font-black text-white">{currentStrikerName}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                  Non-striker
+                </p>
+                <p className="mt-1 text-sm font-black text-white">{currentNonStrikerName}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                  Bowler
+                </p>
+                <p className="mt-1 text-sm font-black text-white">{currentBowlerName}</p>
+              </div>
+            </div>
+
             <div className="space-y-4 md:hidden">
               <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.18)]">
                 <div className="flex items-start justify-between gap-4">
@@ -3074,18 +3121,32 @@ function ScoringView({
                         </button>
                       ))}
                     </div>
-
-                    <label className="mt-3 flex items-center gap-2 rounded-2xl bg-white/5 px-3 py-3 text-sm text-slate-200">
-                      <input
-                        checked={isBouncer}
-                        onChange={(event) => setIsBouncer(event.target.checked)}
-                        type="checkbox"
-                        disabled={scoringDisabled}
-                      />
-                      Bouncer
-                    </label>
                   </div>
                 ) : null}
+
+                <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-500/10 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-amber-200">
+                        Bouncer
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        Tap once for a bouncer. The backend will convert the second one in the over to a no-ball.
+                      </p>
+                    </div>
+                    <PrimaryButton
+                      type="button"
+                      tone={isBouncer ? "accent" : "ghost"}
+                      onClick={() => setIsBouncer((value) => !value)}
+                      disabled={scoringDisabled}
+                      aria-pressed={isBouncer}
+                      aria-label="Toggle bouncer"
+                      className="min-h-[3.25rem] px-4 text-[11px] uppercase tracking-[0.22em]"
+                    >
+                      Bouncer
+                    </PrimaryButton>
+                  </div>
+                </div>
               </div>
 
               <div className="rounded-[2rem] border border-white/10 bg-white/[0.03] p-4">
@@ -3142,22 +3203,25 @@ function ScoringView({
                         </p>
                         <div className="mt-3 grid grid-cols-2 gap-3">
                           {[
-                            { label: "Striker", value: "STRIKER" },
-                            { label: "Non-striker", value: "NON_STRIKER" },
+                            { label: currentStrikerName, role: "Striker", value: "STRIKER" },
+                            { label: currentNonStrikerName, role: "Non-striker", value: "NON_STRIKER" },
                           ].map((option) => (
                             <button
                               key={option.value}
                               type="button"
                               onClick={() => setDismissedBatsmanPosition(option.value)}
                               disabled={scoringDisabled}
-                              aria-label={`Dismissed batsman was ${option.label}`}
-                              className={`rounded-2xl px-3 py-3 text-sm font-black transition ${
+                              aria-label={`Dismissed batsman was ${option.role}`}
+                              className={`rounded-2xl px-3 py-3 text-left text-sm font-black transition ${
                                 dismissedBatsmanPosition === option.value
                                   ? "bg-lime-300 text-slate-950"
                                   : "bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
                               }`}
                             >
-                              {option.label}
+                              <span className="block text-base">{option.label}</span>
+                              <span className="mt-1 block text-[11px] uppercase tracking-[0.24em] opacity-70">
+                                {option.role}
+                              </span>
                             </button>
                           ))}
                         </div>
@@ -3199,15 +3263,15 @@ function ScoringView({
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2 overflow-x-auto pb-1">
                   {currentOverBalls.length ? (
-                    currentOverBalls.map((ball: any) => (
+                    currentOverBalls.slice(-6).map((ball: any) => (
                       <div
-                        key={`${ball.innings}-${ball.over}-${ball.ball}-${ball._id ?? ball.createdAt ?? ballLabel(ball)}`}
+                        key={`${ball.innings}-${ball.over}-${ball.ball}-${ball._id ?? ball.createdAt ?? currentOverChipLabel(ball)}`}
                         className="flex min-w-[4.4rem] flex-col items-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2"
                       >
                         <span className="text-[11px] font-bold tracking-[0.2em] text-slate-500">
                           {ball.over}.{ball.ball}
                         </span>
-                        <span className="text-lg font-black text-white">{ballLabel(ball)}</span>
+                        <span className="text-lg font-black text-white">{currentOverChipLabel(ball)}</span>
                       </div>
                     ))
                   ) : (
@@ -3329,18 +3393,32 @@ function ScoringView({
                 {requiresRunOutDismissalPosition ? (
                   <div className="mt-4">
                     <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">
-                      Run out batsman
+                      Who was run out?
                     </p>
-                    <select
-                      value={dismissedBatsmanPosition}
-                      onChange={(event) => setDismissedBatsmanPosition(event.target.value)}
-                      className="input mt-3 w-full"
-                      disabled={scoringDisabled}
-                    >
-                      <option value="">Select dismissed batsman</option>
-                      <option value="STRIKER">Striker</option>
-                      <option value="NON_STRIKER">Non-striker</option>
-                    </select>
+                    <div className="mt-3 grid gap-3">
+                      {[
+                        { label: currentStrikerName, role: "Striker", value: "STRIKER" },
+                        { label: currentNonStrikerName, role: "Non-striker", value: "NON_STRIKER" },
+                      ].map((option) => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setDismissedBatsmanPosition(option.value)}
+                          disabled={scoringDisabled}
+                          aria-label={`Dismissed batsman was ${option.role}`}
+                          className={`rounded-2xl border px-4 py-3 text-left transition ${
+                            dismissedBatsmanPosition === option.value
+                              ? "border-lime-300 bg-lime-300/15 text-lime-100"
+                              : "border-white/10 bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                          }`}
+                        >
+                          <span className="block text-sm font-black">{option.label}</span>
+                          <span className="mt-1 block text-[11px] font-bold uppercase tracking-[0.24em] opacity-70">
+                            {option.role}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 ) : null}
 
@@ -3363,15 +3441,29 @@ function ScoringView({
                   </select>
                 </div>
 
-                <label className="mt-4 flex items-center gap-2 text-sm text-slate-300">
-                  <input
-                    checked={isBouncer}
-                    onChange={(event) => setIsBouncer(event.target.checked)}
-                    type="checkbox"
-                    disabled={scoringDisabled}
-                  />
-                  Bouncer
-                </label>
+                <div className="mt-4 rounded-2xl border border-amber-400/20 bg-amber-500/10 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-[0.24em] text-amber-200">
+                        Bouncer
+                      </p>
+                      <p className="mt-1 text-xs text-slate-300">
+                        Tap once for a bouncer. The backend will convert the second one in the over to a no-ball.
+                      </p>
+                    </div>
+                    <PrimaryButton
+                      type="button"
+                      tone={isBouncer ? "accent" : "ghost"}
+                      onClick={() => setIsBouncer((value) => !value)}
+                      disabled={scoringDisabled}
+                      aria-pressed={isBouncer}
+                      aria-label="Toggle bouncer"
+                      className="min-h-[3.25rem] px-4 text-[11px] uppercase tracking-[0.22em]"
+                    >
+                      Bouncer
+                    </PrimaryButton>
+                  </div>
+                </div>
 
                 <PrimaryButton className="mt-6 w-full" onClick={scoreDelivery} disabled={scoringDisabled}>
                   {busy ? "Saving..." : "Record ball"}
