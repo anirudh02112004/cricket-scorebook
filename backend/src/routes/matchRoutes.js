@@ -19,7 +19,8 @@ const {
     getMatchHistory,
     getPlayerOfTheMatch,
     deleteMatch,
-    selectNextBatsman
+    selectNextBatsman,
+    swapBatters
 } = require("../controllers/matchController");
 const authMiddleware = require("../middleware/authMiddleware");
 
@@ -60,6 +61,8 @@ router.delete("/:matchId", authMiddleware, deleteMatch);
 router.patch("/:matchId/start", authMiddleware, startMatch);
 
 router.patch("/:matchId/change-bowler", authMiddleware, changeBowler);
+
+router.patch("/:matchId/swap-batters", authMiddleware, swapBatters);
 
 router.patch("/:matchId/select-next-batsman", authMiddleware, selectNextBatsman);
 

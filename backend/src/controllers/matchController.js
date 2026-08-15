@@ -726,6 +726,57 @@ async function changeBowler(req, res) {
     }
 }
 
+async function swapBatters(req, res) {
+    try {
+        const match = await Match.findById(req.params.matchId);
+
+        if (!match) {
+            return res.status(404).json({
+                success: false,
+                message: "Match not found"
+            });
+        }
+
+        if (match.status !== "In Progress") {
+            return res.status(400).json({
+                success: false,
+                message: "Match not in progress"
+            });
+        }
+
+        if (!match.matchState.striker || !match.matchState.nonStriker) {
+            return res.status(400).json({
+                success: false,
+                message: "Current striker and non-striker are required"
+            });
+        }
+
+        const temp = match.matchState.striker;
+        match.matchState.striker = match.matchState.nonStriker;
+        match.matchState.nonStriker = temp;
+
+        await match.save();
+
+        const populated = await Match.findById(match._id)
+            .populate("teamA.players")
+            .populate("teamB.players")
+            .populate("matchState.striker")
+            .populate("matchState.nonStriker")
+            .populate("matchState.currentBowler");
+
+        return res.status(200).json({
+            success: true,
+            message: "Batters swapped",
+            match: populated
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+}
+
 async function selectNextBatsman(req, res) {
     try {
         const { batsmanId } = req.body;
@@ -1968,6 +2019,7 @@ module.exports = {
     deleteMatch,
     startMatch,
     changeBowler,
+    swapBatters,
     selectNextBatsman,
     getScoreboard,
     getCurrentOver,

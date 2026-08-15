@@ -2765,6 +2765,59 @@ function ScoringView({
     if (ok) setBowlerPickerOpen(false);
   };
 
+  const swapBatters = async () => {
+    if (!matchId || !currentBatters.striker || !currentBatters.nonStriker) return;
+
+    setBusy(true);
+    setFeedback("Swapping batters...");
+
+    try {
+      const response = await cricketApi.swapBatters(matchId);
+      const nextMatch = response.data?.match ?? null;
+
+      if (nextMatch) {
+        bundle.setData((current: Record<string, any>) => {
+          const currentMatch = current.match ?? match;
+          if (!currentMatch) {
+            return current;
+          }
+
+          const nextScoreboard = {
+            ...(current.scoreboard ?? {}),
+            striker: nextMatch.matchState?.striker ?? current.scoreboard?.striker ?? null,
+            nonStriker: nextMatch.matchState?.nonStriker ?? current.scoreboard?.nonStriker ?? null,
+            bowler: nextMatch.matchState?.currentBowler ?? current.scoreboard?.bowler ?? null,
+          };
+
+          const nextPartnership = current.partnership
+            ? {
+                ...current.partnership,
+                striker: current.partnership.nonStriker
+                  ? { ...current.partnership.nonStriker }
+                  : current.partnership.nonStriker,
+                nonStriker: current.partnership.striker
+                  ? { ...current.partnership.striker }
+                  : current.partnership.striker,
+              }
+            : current.partnership;
+
+          return {
+            ...current,
+            match: nextMatch,
+            scoreboard: nextScoreboard,
+            partnership: nextPartnership ?? current.partnership,
+          };
+        });
+      }
+
+      setFeedback(response.data?.message ?? "Batters swapped");
+    } catch (error) {
+      setFeedback(messageOf(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const scoreDelivery = async () => {
     if (!matchId) return;
     if (isWicket && dismissalType === "Run Out" && !dismissedBatsmanPosition) {
@@ -2935,12 +2988,28 @@ function ScoringView({
               </div>
             }
           >
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-4">
               <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
                 <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
                   Striker
                 </p>
                 <p className="mt-1 text-sm font-black text-white">{currentStrikerName}</p>
+              </div>
+              <div className="rounded-2xl border border-lime-300/20 bg-lime-300/10 px-4 py-3">
+                <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-lime-200">
+                  Swap
+                </p>
+                <PrimaryButton
+                  type="button"
+                  tone="ghost"
+                  onClick={swapBatters}
+                  disabled={scoringDisabled || !currentBatters.striker || !currentBatters.nonStriker}
+                  aria-label="Swap striker and non-striker"
+                  className="mt-2 min-h-[3.5rem] w-full justify-center text-sm uppercase tracking-[0.24em]"
+                >
+                  <Shuffle size={15} />
+                  Swap
+                </PrimaryButton>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
                 <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">

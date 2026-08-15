@@ -73,6 +73,7 @@ export const cricketApi = {
   startMatch: (id: string, data?: unknown) => api.patch(`/matches/${id}/start`, data),
   changeBowler: (id: string, bowlerId: string) =>
     api.patch(`/matches/${id}/change-bowler`, { bowlerId }),
+  swapBatters: (id: string) => api.patch(`/matches/${id}/swap-batters`),
   selectNextBatsman: (id: string, batsmanId: string) =>
     api.patch(`/matches/${id}/select-next-batsman`, { batsmanId }),
   scoreboard: (id: string) => api.get(`/matches/${id}/scoreboard`),
