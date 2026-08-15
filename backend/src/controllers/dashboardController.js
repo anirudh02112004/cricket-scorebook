@@ -11,7 +11,8 @@ async function getDashboard(req, res) {
             status: "In Progress"
         });
 
-        const totalPlayers = await Player.countDocuments(activePlayerFilter);
+        const activePlayers = await Player.find(activePlayerFilter).select("_id");
+        const totalPlayers = activePlayers.length;
 
         const totalMatches = await Match.countDocuments();
 

@@ -47,10 +47,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       hasCurrentUser: Boolean(firebaseAuth.currentUser),
     });
     const idToken = await nextUser.getIdToken(forceRefresh);
-    console.log("========== STEP 2 ==========");
-    console.log("Firebase Token:");
-    console.log(idToken);
-    console.log("Token Length:", idToken ? idToken.length : "NULL");
+    console.log("[auth] token ready", {
+      hasToken: Boolean(idToken),
+      tokenLength: idToken ? idToken.length : 0,
+    });
     setApiAuthToken(idToken);
     setToken(idToken);
 
@@ -58,10 +58,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        console.log("========== STEP 3 ==========");
-        console.log("Calling backend...");
-        console.log("Authorization Header:");
-        console.log(`Bearer ${idToken}`);
         console.log("[auth] REQUEST START /auth/me");
         const response = await cricketApi.authMe();
         console.log("[auth] REQUEST COMPLETED /auth/me", {
@@ -131,14 +127,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signInWithGoogle = async () => {
     const provider = new GoogleAuthProvider();
     const result = await signInWithPopup(firebaseAuth, provider);
-    console.log("========== STEP 1 ==========");
-    console.log("Google login successful");
-    console.log(result.user);
+    console.log("[auth] Google login successful", {
+      uid: result.user.uid,
+      email: result.user.email ?? null,
+    });
     const popupToken = await result.user.getIdToken(true);
-    console.log("========== STEP 2 ==========");
-    console.log("Firebase Token:");
-    console.log(popupToken);
-    console.log("Token Length:", popupToken ? popupToken.length : "NULL");
+    console.log("[auth] popup token ready", {
+      hasToken: Boolean(popupToken),
+      tokenLength: popupToken ? popupToken.length : 0,
+    });
     await syncWithBackend(result.user, true);
   };
 

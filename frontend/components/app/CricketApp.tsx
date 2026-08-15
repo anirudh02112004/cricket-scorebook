@@ -98,6 +98,9 @@ const extraOptions = [
   { label: "Leg Bye", value: "LegBye" },
 ];
 
+const MIN_PLAYERS_PER_TEAM = 5;
+const MAX_PLAYERS_PER_TEAM = 11;
+
 const formatDate = (value: string | Date | undefined) => {
   if (!value) return "Today";
   const date = new Date(value);
@@ -494,9 +497,23 @@ export default function CricketApp({
         let nextData: Record<string, any> = {};
 
         if (page === "dashboard") {
-          console.log("[load] REQUEST URL /dashboard");
-          const response = await cricketApi.dashboard();
-          nextData = response.data.dashboard ?? {};
+          console.log("[load] REQUEST URL /dashboard + /players");
+          const [dashboardResponse, playersResponse] = await Promise.all([
+            cricketApi.dashboard(),
+            cricketApi.players(),
+          ]);
+          const dashboardData = dashboardResponse.data.dashboard ?? {};
+          const playersCount =
+            playersResponse.data?.count ??
+            playersResponse.data?.players?.length ??
+            0;
+          nextData = {
+            ...dashboardData,
+            stats: {
+              ...(dashboardData.stats ?? {}),
+              totalPlayers: playersCount,
+            },
+          };
         } else if (page === "players") {
           console.log("[load] REQUEST URL /players + /matches");
           const [playersRes, matchesRes] = await Promise.all([
@@ -607,6 +624,7 @@ export default function CricketApp({
         <PlayersView
           players={data.players ?? []}
           matches={data.matches ?? []}
+          authLoading={authLoading}
           invoke={invoke}
         />
       );
@@ -905,10 +923,12 @@ function DashboardView({ dashboard }: { dashboard: Record<string, any> }) {
 function PlayersView({
   players,
   matches,
+  authLoading,
   invoke,
 }: {
   players: any[];
   matches: any[];
+  authLoading: boolean;
   invoke: (action: () => Promise<any>, success: string) => Promise<void>;
 }) {
   const { player: authPlayer } = useAuth();
@@ -1002,7 +1022,21 @@ function PlayersView({
     event.preventDefault();
     setMatchFormError("");
 
+    console.log("[match:create] FORM SUBMIT FIRED");
+    console.log("[match:create] selectedTeamA:", selectedTeamA);
+    console.log("[match:create] selectedTeamB:", selectedTeamB);
+    console.log("[match:create] authLoading:", authLoading);
+
     if (savingMatch) {
+      console.log("[match:create] validation:", "blocked because a save is already in progress");
+      return;
+    }
+
+    if (authLoading) {
+      const errorMessage = "Authentication is still loading. Please wait and try again.";
+      console.log("[match:create] validation:", errorMessage);
+      setMatchFormError(errorMessage);
+      toast.error(errorMessage);
       return;
     }
 
@@ -1013,8 +1047,31 @@ function PlayersView({
       .filter((player) => selectedTeamB.includes(player._id))
       .map((player) => player._id);
 
-    if (teamAPlayers.length < 6 || teamBPlayers.length < 6) {
-      setMatchFormError("Each team needs at least 6 players.");
+    const validationDetails = {
+      teamAPlayers: teamAPlayers.length,
+      teamBPlayers: teamBPlayers.length,
+      minPlayersPerTeam: MIN_PLAYERS_PER_TEAM,
+      maxPlayersPerTeam: MAX_PLAYERS_PER_TEAM,
+    };
+    console.log("[match:create] validation:", validationDetails);
+
+    if (
+      teamAPlayers.length < MIN_PLAYERS_PER_TEAM ||
+      teamBPlayers.length < MIN_PLAYERS_PER_TEAM
+    ) {
+      const errorMessage = `Each team needs at least ${MIN_PLAYERS_PER_TEAM} players.`;
+      setMatchFormError(errorMessage);
+      toast.error(errorMessage);
+      return;
+    }
+
+    if (
+      teamAPlayers.length > MAX_PLAYERS_PER_TEAM ||
+      teamBPlayers.length > MAX_PLAYERS_PER_TEAM
+    ) {
+      const errorMessage = `Each team can have at most ${MAX_PLAYERS_PER_TEAM} players.`;
+      setMatchFormError(errorMessage);
+      toast.error(errorMessage);
       return;
     }
 
@@ -1028,25 +1085,27 @@ function PlayersView({
     };
 
     const requestUrl = `${getApiBaseUrl().replace(/\/$/, "")}/matches`;
-    console.log("[match:create] method:", "POST");
-    console.log("[match:create] url:", requestUrl);
-    console.log("[match:create] body:", payload);
+    console.log("[match:create] payload:", payload);
 
     setSavingMatch(true);
 
     try {
-      const firebaseToken = firebaseAuth.currentUser
-        ? await firebaseAuth.currentUser.getIdToken(true)
-        : null;
-      console.log("[match:create] Firebase bearer token exists:", Boolean(firebaseToken));
-      if (firebaseToken) {
-        console.log("[match:create] Firebase bearer token length:", firebaseToken.length);
+      const currentUser = firebaseAuth.currentUser;
+      let firebaseToken: string | null = null;
+      if (currentUser) {
+        firebaseToken = await currentUser.getIdToken(true);
       }
+      console.log("[match:create] Firebase bearer token exists:", Boolean(firebaseToken));
+      console.log("[match:create] Firebase bearer token length:", firebaseToken?.length ?? 0);
 
+      console.log("[match:create] POST START", { url: requestUrl });
       const response = await cricketApi.createMatch(payload);
 
-      console.log("[match:create] response status:", response.status);
-      console.log("[match:create] response body:", response.data);
+      console.log("[match:create] POST RESPONSE", {
+        status: response.status,
+        hasMatch: Boolean(response.data?.match),
+        matchId: response.data?.match?._id ?? response.data?.matchId ?? null,
+      });
 
       const createdMatchId = response.data?.match?._id ?? response.data?.matchId;
       if (!createdMatchId) {
@@ -1067,7 +1126,7 @@ function PlayersView({
 
       router.push(`/scoring?id=${createdMatchId}`);
     } catch (error) {
-      console.error("[match:create] request failed:", error);
+      console.error("[match:create] POST ERROR", error);
       const reason = messageOf(error);
       console.error("[match:create] failure reason:", reason);
       const errorMessage = `Failed to save match: ${reason}`;
@@ -1095,13 +1154,13 @@ function PlayersView({
           label="Team A picks"
           value={selectedTeamA.length}
           icon={<Shield size={18} />}
-          hint="Need 6 to 11 players"
+          hint="Need 5 to 11 players"
         />
         <StateCard
           label="Team B picks"
           value={selectedTeamB.length}
           icon={<Shield size={18} />}
-          hint="Need 6 to 11 players"
+          hint="Need 5 to 11 players"
         />
       </div>
 
@@ -1229,7 +1288,7 @@ function PlayersView({
         action={
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Shuffle size={14} />
-            6 to 11 players per team
+            {MIN_PLAYERS_PER_TEAM} to {MAX_PLAYERS_PER_TEAM} players per team
           </div>
         }
       >
@@ -1345,13 +1404,15 @@ function PlayersView({
               type="submit"
               disabled={
                 savingMatch ||
-                selectedTeamA.length < 6 ||
-                selectedTeamA.length > 11 ||
-                selectedTeamB.length < 6 ||
-                selectedTeamB.length > 11
+                authLoading ||
+                !players.length
               }
             >
-              {savingMatch ? "Saving Match..." : "Save Match"}
+              {savingMatch
+                ? "Saving Match..."
+                : authLoading
+                  ? "Loading auth..."
+                  : "Save Match"}
             </PrimaryButton>
           </div>
         </form>

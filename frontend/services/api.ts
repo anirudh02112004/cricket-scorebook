@@ -16,11 +16,6 @@ const api = axios.create({
 let authToken = "";
 
 api.interceptors.request.use(async (config) => {
-  console.log("========== AXIOS ==========");
-  console.log(config.method);
-  console.log(config.url);
-  console.log(config.headers);
-
   const protectedPath = Boolean(config.url && !String(config.url).startsWith("/search"));
   let token = authToken;
 
@@ -38,9 +33,8 @@ api.interceptors.request.use(async (config) => {
   }
 
   if (protectedPath) {
-    const outgoingAuthorization = token ? `Bearer ${token}` : "<missing>";
     console.log(
-      `[api] ${String(config.method || "GET").toUpperCase()} ${String(config.url || "")} Authorization header: ${outgoingAuthorization}`,
+      `[api] ${String(config.method || "GET").toUpperCase()} ${String(config.url || "")} Authorization header present: ${Boolean(token)}`,
     );
   }
 

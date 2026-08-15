@@ -3,12 +3,11 @@ const Ball = require("../models/Ball");
 const Match = require("../models/Match");
 const mongoose = require("mongoose");
 
-console.log("Match =", Match);
-console.log("Type =", typeof Match);
-console.log("Create =", Match.create);
-
 const Player = require("../models/Player");
 const { endMatch, applyPlayerOfMatch } = require("../utils/matchUtils");
+
+const MIN_PLAYERS_PER_TEAM = 5;
+const MAX_PLAYERS_PER_TEAM = 11;
 
 function normalizeExtraType(value) {
     const normalized = String(value || "None").replace(/\s+/g, "").toLowerCase();
@@ -214,12 +213,12 @@ async function createMatch(req,res){
             return res.status(400).json(buildMatchCreateValidationError("Team A and Team B must include player arrays"));
         }
 
-        if (normalizedTeamAPlayers.length < 6 || normalizedTeamBPlayers.length < 6) {
-            return res.status(400).json(buildMatchCreateValidationError("Each team must have at least 6 players"));
+        if (normalizedTeamAPlayers.length < MIN_PLAYERS_PER_TEAM || normalizedTeamBPlayers.length < MIN_PLAYERS_PER_TEAM) {
+            return res.status(400).json(buildMatchCreateValidationError(`Each team must have at least ${MIN_PLAYERS_PER_TEAM} players`));
         }
 
-        if (normalizedTeamAPlayers.length > 11 || normalizedTeamBPlayers.length > 11) {
-            return res.status(400).json(buildMatchCreateValidationError("Each team must have no more than 11 players"));
+        if (normalizedTeamAPlayers.length > MAX_PLAYERS_PER_TEAM || normalizedTeamBPlayers.length > MAX_PLAYERS_PER_TEAM) {
+            return res.status(400).json(buildMatchCreateValidationError(`Each team must have no more than ${MAX_PLAYERS_PER_TEAM} players`));
         }
 
         if (!tossWinner) {
