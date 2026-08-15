@@ -83,10 +83,40 @@ const ballSchema = new mongoose.Schema(
         noBallReason: {
             type: String,
             enum: [
-                "Height",
-                "Overstep",
-                "SecondBouncer"
+                "HEIGHT",
+                "OVERSTEP",
+                "SECOND_BOUNCER"
             ]
+        },
+        dismissedBatsman: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Player",
+            default: null
+        },
+        dismissedBatsmanPosition: {
+            type: String,
+            enum: [
+                "STRIKER",
+                "NON_STRIKER"
+            ],
+            default: null
+        },
+        runsCompleted: {
+            type: Number,
+            default: 0
+        },
+        battersCrossed: {
+            type: Boolean,
+            default: false
+        },
+        deliveryRequestId: {
+            type: String,
+            default: null,
+            index: true
+        },
+        commentaryText: {
+            type: String,
+            default: null
         },
         isFreeHit: {
             type: Boolean,

@@ -5,6 +5,7 @@ const mongoose = require("mongoose");
 
 const Player = require("../models/Player");
 const { endMatch, applyPlayerOfMatch } = require("../utils/matchUtils");
+const { resolveRunOutState } = require("../utils/deliveryEngine");
 
 const MIN_PLAYERS_PER_TEAM = 5;
 const MAX_PLAYERS_PER_TEAM = 11;
@@ -786,7 +787,36 @@ async function selectNextBatsman(req, res) {
             });
         }
 
-        match.matchState.striker = batsmanId;
+        const lastBall = await Ball.findOne({
+            match: match._id,
+            innings: match.matchState.innings
+        }).sort({
+            createdAt: -1
+        });
+
+        const normalizedDismissalType = String(lastBall?.dismissalType || "").trim();
+        if (normalizedDismissalType === "Run Out") {
+            if (!lastBall.dismissedBatsmanPosition) {
+                return res.status(400).json({
+                    success: false,
+                    message: "Run Out dismissal position is missing"
+                });
+            }
+
+            const runOutState = resolveRunOutState({
+                strikerId: match.matchState.striker,
+                nonStrikerId: match.matchState.nonStriker,
+                dismissedBatsmanPosition: lastBall.dismissedBatsmanPosition,
+                runsCompleted: lastBall.runsCompleted ?? lastBall.runsOffBat ?? 0,
+                incomingBatsmanId: batsmanId
+            });
+
+            match.matchState.striker = runOutState.strikerId;
+            match.matchState.nonStriker = runOutState.nonStrikerId;
+        } else {
+            match.matchState.striker = batsmanId;
+        }
+
         match.matchState.awaitingNextBatsman = false;
 
         if (match.matchState.nextBatsmanIndex < battingTeam.players.length) {

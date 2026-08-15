@@ -98,6 +98,24 @@ const extraOptions = [
   { label: "Leg Bye", value: "LegBye" },
 ];
 
+const primaryRunOptions = [0, 1, 2, 3, 4, 6];
+
+const wicketOptions = [
+  "Bowled",
+  "Caught",
+  "LBW",
+  "Run Out",
+  "Stumped",
+  "Hit Wicket",
+];
+
+const noBallReasonOptions = [
+  { label: "Normal no ball", value: "" },
+  { label: "Overstep", value: "OVERSTEP" },
+  { label: "Height", value: "HEIGHT" },
+  { label: "Second bouncer", value: "SECOND_BOUNCER" },
+];
+
 const MIN_PLAYERS_PER_TEAM = 5;
 const MAX_PLAYERS_PER_TEAM = 11;
 
@@ -458,7 +476,7 @@ function useMatchBundle(matchId?: string, refreshToken?: number) {
     };
   }, [matchId, refreshToken, revision]);
 
-  return { data, loading, error, reload };
+  return { data, loading, error, reload, setData };
 }
 
 export default function CricketApp({
@@ -2326,6 +2344,8 @@ function ScoringView({
   const [extraRuns, setExtraRuns] = useState(0);
   const [isWicket, setIsWicket] = useState(false);
   const [dismissalType, setDismissalType] = useState("None");
+  const [dismissedBatsmanPosition, setDismissedBatsmanPosition] = useState("");
+  const [noBallReason, setNoBallReason] = useState("");
   const [fielderId, setFielderId] = useState("");
   const [isBouncer, setIsBouncer] = useState(false);
   const isSecondInningsSetup =
@@ -2346,6 +2366,8 @@ function ScoringView({
     setExtraRuns(0);
     setIsWicket(false);
     setDismissalType("None");
+    setDismissedBatsmanPosition("");
+    setNoBallReason("");
     setFielderId("");
     setIsBouncer(false);
   }, [matchId]);
@@ -2386,6 +2408,16 @@ function ScoringView({
   const currentStrikerId = String(match?.matchState?.striker?._id ?? "");
   const currentNonStrikerId = String(match?.matchState?.nonStriker?._id ?? "");
   const currentBowlerName = match?.matchState?.currentBowler?.name ?? "Not set";
+  const currentOverBalls = bundle.data.currentOver?.balls ?? [];
+  const currentOverNumber = bundle.data.currentOver?.over ?? battingTeam?.completedOvers ?? 0;
+  const currentPartnership = bundle.data.partnership ?? null;
+  const currentBowlerStats = useMemo(
+    () =>
+      (bundle.data.bowling ?? []).find(
+        (player: any) => String(player.name ?? "") === String(currentBowlerName ?? ""),
+      ) ?? null,
+    [bundle.data.bowling, currentBowlerName],
+  );
 
   const openingStrikerOptions = battingPlayers;
   const openingNonStrikerOptions = battingPlayers.filter(
@@ -2421,8 +2453,22 @@ function ScoringView({
     dismissalType === "Run Out" ||
     dismissalType === "Stumped" ||
     dismissalType === "Obstructing the Field";
+  const requiresRunOutDismissalPosition = isWicket && dismissalType === "Run Out";
+  const isNoBallSelected = extraType === "NoBall";
   const isOpeningFlow = match?.status === "Scheduled";
   const setupHeading = isSecondInningsSetup ? "Start Second Innings" : "Start Match";
+
+  useEffect(() => {
+    if (!isNoBallSelected && noBallReason) {
+      setNoBallReason("");
+    }
+  }, [isNoBallSelected, noBallReason]);
+
+  useEffect(() => {
+    if (extraType !== "NoBall" && isBouncer) {
+      setIsBouncer(false);
+    }
+  }, [extraType, isBouncer]);
 
   const runAction = useCallback(
     async (action: () => Promise<any>, success: string) => {
@@ -2442,6 +2488,180 @@ function ScoringView({
       }
     },
     [bundle, matchId],
+  );
+
+  const applyScoreResponse = useCallback(
+    (payload: any) => {
+      const snapshot = payload?.matchSnapshot ?? {};
+      const scoreboard = payload?.scoreboard ?? {};
+      const currentOver = payload?.currentOver ?? null;
+      const commentary = Array.isArray(payload?.commentary) ? payload.commentary : [];
+      const ball = payload?.ball ?? {};
+      const batsmanName = String(ball.batsmanName ?? "");
+      const bowlerName = String(ball.bowlerName ?? "");
+      const dismissedBatsmanName = String(ball.dismissedBatsmanName ?? "");
+      const dismissalType = String(ball.dismissalType ?? "").trim();
+      const isLegalDelivery = ball.isLegalDelivery !== false;
+      const runsOffBat = Number(ball.runsOffBat ?? 0);
+      const extraRuns = Number(ball.extraRuns ?? 0);
+      const totalRuns = Number(ball.totalRuns ?? runsOffBat + extraRuns);
+      const battingSide = snapshot.matchState?.battingTeam ?? match?.matchState?.battingTeam;
+      const battingTeamKey = battingSide === "B" ? "teamB" : "teamA";
+      const shouldCountBowlerWicket =
+        Boolean(ball.isWicket) &&
+        !["Run Out", "Obstructing the Field", "Retired"].includes(dismissalType);
+
+      bundle.setData((current: Record<string, any>) => {
+        const currentMatch = current.match ?? match;
+        if (!currentMatch) {
+          return current;
+        }
+
+        const nextMatchState = {
+          ...(currentMatch.matchState ?? {}),
+          ...(snapshot.matchState ?? {}),
+          striker: scoreboard.striker ?? currentMatch.matchState?.striker ?? null,
+          nonStriker: scoreboard.nonStriker ?? currentMatch.matchState?.nonStriker ?? null,
+          currentBowler: scoreboard.bowler ?? currentMatch.matchState?.currentBowler ?? null,
+        };
+
+        const nextMatch = {
+          ...currentMatch,
+          status: snapshot.status ?? currentMatch.status,
+          target: snapshot.target ?? currentMatch.target,
+          winner: snapshot.winner ?? currentMatch.winner,
+          winningMargin: snapshot.winningMargin ?? currentMatch.winningMargin,
+          matchState: nextMatchState,
+        };
+
+        if (battingTeamKey === "teamA" || battingTeamKey === "teamB") {
+          nextMatch[battingTeamKey] = {
+            ...(currentMatch[battingTeamKey] ?? {}),
+            ...(snapshot.battingTeam ?? {}),
+          };
+        }
+
+        const nextBatting = Array.isArray(current.batting)
+          ? current.batting.map((row: any) => {
+              const rowName = String(row.name ?? "");
+              const nextRow = { ...row };
+              const isCurrentStriker = scoreboard.striker?.name && rowName === scoreboard.striker.name;
+              const isCurrentNonStriker =
+                scoreboard.nonStriker?.name && rowName === scoreboard.nonStriker.name;
+              const isDismissedBatsman =
+                Boolean(ball.isWicket) && dismissedBatsmanName && rowName === dismissedBatsmanName;
+
+              if (rowName === batsmanName) {
+                nextRow.runs = Number(nextRow.runs ?? 0) + runsOffBat;
+                nextRow.balls = Number(nextRow.balls ?? 0) + (isLegalDelivery ? 1 : 0);
+                nextRow.fours = Number(nextRow.fours ?? 0) + (runsOffBat === 4 ? 1 : 0);
+                nextRow.sixes = Number(nextRow.sixes ?? 0) + (runsOffBat === 6 ? 1 : 0);
+                nextRow.strikeRate =
+                  Number(nextRow.balls ?? 0) > 0
+                    ? Number(((Number(nextRow.runs ?? 0) / Number(nextRow.balls ?? 0)) * 100).toFixed(2))
+                    : 0;
+              }
+
+              if (isDismissedBatsman) {
+                nextRow.status = "Out";
+              } else if (isCurrentStriker) {
+                nextRow.status = "Batting*";
+              } else if (isCurrentNonStriker) {
+                nextRow.status = "Batting";
+              } else if (rowName === batsmanName && !ball.isWicket) {
+                nextRow.status = "Not Out";
+              }
+
+              return nextRow;
+            })
+          : current.batting;
+
+        const nextBowling = Array.isArray(current.bowling)
+          ? current.bowling.map((row: any) => {
+              const rowName = String(row.name ?? "");
+              const nextRow = { ...row };
+              const isCurrentBowler = scoreboard.bowler?.name && rowName === scoreboard.bowler.name;
+
+              if (rowName === bowlerName) {
+                const oversString = String(nextRow.overs ?? "0.0");
+                const [completedOversRaw, ballsRaw] = oversString.split(".");
+                const completedOvers = Number(completedOversRaw || 0);
+                const balls = Number(ballsRaw || 0);
+                const legalBalls = completedOvers * 6 + balls + (isLegalDelivery ? 1 : 0);
+                const nextCompletedOvers = Math.floor(legalBalls / 6);
+                const nextBalls = legalBalls % 6;
+                const nextRuns = Number(nextRow.runs ?? 0) + totalRuns;
+
+                nextRow.overs = `${nextCompletedOvers}.${nextBalls}`;
+                nextRow.runs = nextRuns;
+                nextRow.wickets =
+                  Number(nextRow.wickets ?? 0) + (shouldCountBowlerWicket ? 1 : 0);
+                nextRow.economy =
+                  legalBalls > 0 ? Number((nextRuns / (legalBalls / 6)).toFixed(2)) : 0;
+              }
+
+              if (isCurrentBowler) {
+                nextRow.status = "Bowling";
+              } else if (String(nextRow.overs ?? "0.0") !== "0.0") {
+                nextRow.status = "Completed";
+              }
+
+              return nextRow;
+            })
+          : current.bowling;
+
+        const nextPartnership = current.partnership
+          ? {
+              ...current.partnership,
+              striker: current.partnership.striker
+                ? { ...current.partnership.striker }
+                : current.partnership.striker,
+              nonStriker: current.partnership.nonStriker
+                ? { ...current.partnership.nonStriker }
+                : current.partnership.nonStriker,
+            }
+          : current.partnership;
+
+        if (nextPartnership) {
+          const nextPartnershipStrikerName = String(nextPartnership.striker?.name ?? "");
+          const nextPartnershipNonStrikerName = String(nextPartnership.nonStriker?.name ?? "");
+
+          if (nextPartnershipStrikerName === batsmanName) {
+            nextPartnership.striker = {
+              ...nextPartnership.striker,
+              runs: Number(nextPartnership.striker?.runs ?? 0) + runsOffBat,
+              balls: Number(nextPartnership.striker?.balls ?? 0) + (isLegalDelivery ? 1 : 0),
+            };
+          } else if (nextPartnershipNonStrikerName === batsmanName) {
+            nextPartnership.nonStriker = {
+              ...nextPartnership.nonStriker,
+              runs: Number(nextPartnership.nonStriker?.runs ?? 0) + runsOffBat,
+              balls: Number(nextPartnership.nonStriker?.balls ?? 0) + (isLegalDelivery ? 1 : 0),
+            };
+          }
+
+          nextPartnership.runs = Number(nextPartnership.runs ?? 0) + totalRuns;
+          nextPartnership.balls =
+            Number(nextPartnership.balls ?? 0) + (isLegalDelivery ? 1 : 0);
+        }
+
+        return {
+          ...current,
+          match: nextMatch,
+          scoreboard: scoreboard.striker || scoreboard.nonStriker || scoreboard.bowler
+            ? scoreboard
+            : current.scoreboard,
+          currentOver: currentOver ?? current.currentOver,
+          commentary: commentary.length
+            ? [...(current.commentary ?? []), ...commentary]
+            : current.commentary,
+          batting: nextBatting,
+          bowling: nextBowling,
+          partnership: nextPartnership ?? current.partnership,
+        };
+      });
+    },
+    [bundle, match],
   );
 
   function openSetup() {
@@ -2487,34 +2707,54 @@ function ScoringView({
 
   const scoreDelivery = async () => {
     if (!matchId) return;
+    if (isWicket && dismissalType === "Run Out" && !dismissedBatsmanPosition) {
+      setFeedback("Select whether the striker or non-striker was run out");
+      return;
+    }
     const resolvedExtraType = extraType;
     const resolvedExtraRuns =
       resolvedExtraType === "Wide" || resolvedExtraType === "NoBall"
         ? Math.max(1, Number(extraRuns || 1))
         : Number(extraRuns || 0);
+    const resolvedNoBallReason =
+      resolvedExtraType === "NoBall" ? noBallReason || undefined : undefined;
+    const resolvedIsBouncer =
+      resolvedExtraType === "NoBall" ? Boolean(isBouncer || noBallReason === "SECOND_BOUNCER") : isBouncer;
 
-    const ok = await runAction(
-      () =>
-        cricketApi.scoreBall({
-          matchId,
-          runsOffBat: Number(runsOffBat || 0),
-          extraType: resolvedExtraType,
-          extraRuns: resolvedExtraRuns,
-          isWicket,
-          dismissalType: isWicket ? dismissalType : undefined,
-          fielder: fielderId || undefined,
-          isBouncer,
-        }),
-      "Delivery recorded",
-    );
-    if (ok) {
+    setBusy(true);
+    setFeedback("Saving...");
+
+    try {
+      const response = await cricketApi.scoreBall({
+        matchId,
+        runsOffBat: Number(runsOffBat || 0),
+        extraType: resolvedExtraType,
+        extraRuns: resolvedExtraRuns,
+        isWicket,
+        dismissalType: isWicket ? dismissalType : undefined,
+        dismissedBatsmanPosition:
+          isWicket && dismissalType === "Run Out"
+            ? dismissedBatsmanPosition
+            : undefined,
+        fielder: fielderId || undefined,
+        isBouncer: resolvedIsBouncer,
+        noBallReason: resolvedNoBallReason,
+      });
+
+      applyScoreResponse(response.data);
+      setFeedback(response.data?.message ?? "Delivery recorded");
       setRunsOffBat(0);
       setExtraType("None");
       setExtraRuns(0);
       setIsWicket(false);
       setDismissalType("None");
+      setDismissedBatsmanPosition("");
       setFielderId("");
       setIsBouncer(false);
+    } catch (error) {
+      setFeedback(messageOf(error));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -2623,7 +2863,373 @@ function ScoringView({
               </div>
             }
           >
-            <div className="grid gap-4 lg:grid-cols-[1.35fr_0.65fr]">
+            <div className="space-y-4 md:hidden">
+              <div className="rounded-[2rem] border border-white/10 bg-white/[0.04] p-4 shadow-[0_24px_70px_rgba(0,0,0,0.18)]">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-lime-300/80">
+                      {battingTeam?.teamName ?? "Batting team"}
+                    </p>
+                    <p className="mt-2 text-5xl font-black tracking-tight text-white">
+                      {battingTeam?.score ?? 0}
+                      <span className="text-slate-500">/</span>
+                      {battingTeam?.wickets ?? 0}
+                    </p>
+                    <p className="mt-2 text-sm font-bold text-slate-300">
+                      {formatOvers(battingTeam?.completedOvers, battingTeam?.ballsInCurrentOver)} overs
+                    </p>
+                  </div>
+                  <PrimaryButton
+                    tone="ghost"
+                    onClick={undo}
+                    disabled={busy}
+                    aria-label="Undo last ball"
+                    className="shrink-0 px-4 py-3 text-xs uppercase tracking-[0.22em]"
+                  >
+                    <Undo2 size={14} />
+                    Undo
+                  </PrimaryButton>
+                </div>
+
+                <div className="mt-4 grid gap-3">
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                      Striker
+                    </p>
+                    <p className="mt-1 text-lg font-black text-white">
+                      {currentPartnership?.striker?.name ?? match?.matchState?.striker?.name ?? "Not set"}
+                    </p>
+                    <p className="text-sm text-slate-400">
+                      {currentPartnership?.striker
+                        ? `${currentPartnership.striker.runs ?? 0} (${currentPartnership.striker.balls ?? 0})`
+                        : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                      Non-striker
+                    </p>
+                    <p className="mt-1 text-lg font-black text-white">
+                      {currentPartnership?.nonStriker?.name ?? match?.matchState?.nonStriker?.name ?? "Not set"}
+                    </p>
+                    <p className="text-sm text-slate-400">
+                      {currentPartnership?.nonStriker
+                        ? `${currentPartnership.nonStriker.runs ?? 0} (${currentPartnership.nonStriker.balls ?? 0})`
+                        : "—"}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl bg-white/5 p-4">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                      Current bowler
+                    </p>
+                    <p className="mt-1 text-lg font-black text-white">{currentBowlerName}</p>
+                    <p className="text-sm text-slate-400">
+                      {currentBowlerStats
+                        ? `${currentBowlerStats.wickets ?? 0}/${currentBowlerStats.runs ?? 0} (${currentBowlerStats.overs ?? "0.0"})`
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-slate-500">
+                  {dismissalType === "Run Out" ? "Completed runs" : "Runs"}
+                </p>
+                <div className="mt-3 grid grid-cols-3 gap-3">
+                  {primaryRunOptions.map((runs) => (
+                    <button
+                      key={runs}
+                      type="button"
+                      aria-label={`${runs} runs`}
+                      onClick={() => setRunsOffBat(runs)}
+                      disabled={scoringDisabled}
+                      className={`min-h-[4.5rem] rounded-[1.5rem] text-2xl font-black transition sm:min-h-[3.75rem] sm:text-lg ${
+                        runsOffBat === runs
+                          ? "bg-lime-300 text-slate-950"
+                          : "bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                      }`}
+                    >
+                      {runs}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-3 text-xs text-slate-500">
+                  Tap the number that matches the delivery or the completed runs.
+                </p>
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-slate-500">
+                    Extras
+                  </p>
+                  <PrimaryButton
+                    tone="ghost"
+                    className="px-4 py-2 text-[11px] uppercase tracking-[0.22em]"
+                    onClick={() => {
+                      setExtraType("NoBall");
+                      setNoBallReason("");
+                    }}
+                    disabled={scoringDisabled}
+                    aria-label="Select no ball"
+                  >
+                    No Ball
+                  </PrimaryButton>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtraType("Wide");
+                      setNoBallReason("");
+                      setIsBouncer(false);
+                    }}
+                    disabled={scoringDisabled}
+                    aria-label="Select wide"
+                    className={`min-h-[3.75rem] rounded-[1.25rem] border text-base font-black transition ${
+                      extraType === "Wide"
+                        ? "border-lime-300 bg-lime-300/15 text-lime-100"
+                        : "border-white/10 bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                    }`}
+                  >
+                    Wide
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtraType("Bye");
+                      setNoBallReason("");
+                      setIsBouncer(false);
+                    }}
+                    disabled={scoringDisabled}
+                    aria-label="Select bye"
+                    className={`min-h-[3.75rem] rounded-[1.25rem] border text-base font-black transition ${
+                      extraType === "Bye"
+                        ? "border-lime-300 bg-lime-300/15 text-lime-100"
+                        : "border-white/10 bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                    }`}
+                  >
+                    Bye
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtraType("LegBye");
+                      setNoBallReason("");
+                      setIsBouncer(false);
+                    }}
+                    disabled={scoringDisabled}
+                    aria-label="Select leg bye"
+                    className={`min-h-[3.75rem] rounded-[1.25rem] border text-base font-black transition ${
+                      extraType === "LegBye"
+                        ? "border-lime-300 bg-lime-300/15 text-lime-100"
+                        : "border-white/10 bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                    }`}
+                  >
+                    Leg Bye
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExtraType("NoBall");
+                      setNoBallReason("");
+                    }}
+                    disabled={scoringDisabled}
+                    aria-label="Select no ball"
+                    className={`min-h-[3.75rem] rounded-[1.25rem] border text-base font-black transition ${
+                      extraType === "NoBall"
+                        ? "border-lime-300 bg-lime-300/15 text-lime-100"
+                        : "border-white/10 bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                    }`}
+                  >
+                    No Ball
+                  </button>
+                </div>
+
+                {isNoBallSelected ? (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/25 p-3">
+                    <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                      No-ball type
+                    </p>
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {noBallReasonOptions.map((option) => (
+                        <button
+                          key={option.value || "normal"}
+                          type="button"
+                          onClick={() => {
+                            setNoBallReason(option.value);
+                            setIsBouncer(option.value === "SECOND_BOUNCER");
+                          }}
+                          disabled={scoringDisabled}
+                          aria-label={option.label}
+                          className={`rounded-2xl px-3 py-3 text-sm font-black transition ${
+                            noBallReason === option.value
+                              ? "bg-lime-300 text-slate-950"
+                              : "bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <label className="mt-3 flex items-center gap-2 rounded-2xl bg-white/5 px-3 py-3 text-sm text-slate-200">
+                      <input
+                        checked={isBouncer}
+                        onChange={(event) => setIsBouncer(event.target.checked)}
+                        type="checkbox"
+                        disabled={scoringDisabled}
+                      />
+                      Bouncer
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/[0.03] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-slate-500">
+                    Wicket
+                  </p>
+                  <PrimaryButton
+                    tone={isWicket ? "accent" : "ghost"}
+                    onClick={() => {
+                      setIsWicket((value) => !value);
+                      if (isWicket) {
+                        setDismissalType("None");
+                        setDismissedBatsmanPosition("");
+                      }
+                    }}
+                    disabled={scoringDisabled}
+                    aria-pressed={isWicket}
+                    aria-label="Toggle wicket"
+                    className="min-h-[3.75rem] px-5 text-base uppercase tracking-[0.24em]"
+                  >
+                    Wicket
+                  </PrimaryButton>
+                </div>
+
+                {isWicket ? (
+                  <div className="mt-4 space-y-4">
+                    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                      {wicketOptions.map((option) => (
+                        <button
+                          key={option}
+                          type="button"
+                          onClick={() => {
+                            setDismissalType(option);
+                            setDismissedBatsmanPosition("");
+                          }}
+                          disabled={scoringDisabled}
+                          aria-label={`Select ${option}`}
+                          className={`min-h-[3.5rem] rounded-[1.25rem] border px-3 text-sm font-black transition ${
+                            dismissalType === option
+                              ? "border-lime-300 bg-lime-300/15 text-lime-100"
+                              : "border-white/10 bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                          }`}
+                        >
+                          {option}
+                        </button>
+                      ))}
+                    </div>
+
+                    {requiresRunOutDismissalPosition ? (
+                      <div className="rounded-2xl border border-white/10 bg-slate-950/25 p-3">
+                        <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                          Who was run out?
+                        </p>
+                        <div className="mt-3 grid grid-cols-2 gap-3">
+                          {[
+                            { label: "Striker", value: "STRIKER" },
+                            { label: "Non-striker", value: "NON_STRIKER" },
+                          ].map((option) => (
+                            <button
+                              key={option.value}
+                              type="button"
+                              onClick={() => setDismissedBatsmanPosition(option.value)}
+                              disabled={scoringDisabled}
+                              aria-label={`Dismissed batsman was ${option.label}`}
+                              className={`rounded-2xl px-3 py-3 text-sm font-black transition ${
+                                dismissedBatsmanPosition === option.value
+                                  ? "bg-lime-300 text-slate-950"
+                                  : "bg-white/5 text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-slate-500"
+                              }`}
+                            >
+                              {option.label}
+                            </button>
+                          ))}
+                        </div>
+                        <p className="mt-3 text-xs text-slate-500">
+                          Pick the end the dismissed batsman was running to.
+                        </p>
+                      </div>
+                    ) : null}
+
+                    <div className="rounded-2xl border border-white/10 bg-slate-950/25 p-3">
+                      <p className="text-[11px] font-bold uppercase tracking-[0.28em] text-slate-500">
+                        Fielder
+                      </p>
+                      <select
+                        value={fielderId}
+                        onChange={(event) => setFielderId(event.target.value)}
+                        className="input mt-3 w-full"
+                        disabled={!wicketFielders || scoringDisabled}
+                      >
+                        <option value="">Select fielder</option>
+                        {battingPlayers.concat(bowlingPlayers).map((player: any) => (
+                          <option key={player._id} value={player._id}>
+                            {player.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-4 text-sm text-slate-400">
+                    Tap Wicket to open dismissal options.
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-[2rem] border border-white/10 bg-white/[0.03] p-4">
+                <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-slate-500">
+                  Current over
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2 overflow-x-auto pb-1">
+                  {currentOverBalls.length ? (
+                    currentOverBalls.map((ball: any) => (
+                      <div
+                        key={`${ball.innings}-${ball.over}-${ball.ball}-${ball._id ?? ball.createdAt ?? ballLabel(ball)}`}
+                        className="flex min-w-[4.4rem] flex-col items-center rounded-2xl border border-white/10 bg-white/5 px-3 py-2"
+                      >
+                        <span className="text-[11px] font-bold tracking-[0.2em] text-slate-500">
+                          {ball.over}.{ball.ball}
+                        </span>
+                        <span className="text-lg font-black text-white">{ballLabel(ball)}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-400">
+                      No balls yet in the current over.
+                    </div>
+                  )}
+                </div>
+                <p className="mt-3 text-xs text-slate-500">Over {currentOverNumber}</p>
+              </div>
+
+              <PrimaryButton
+                tone="ghost"
+                className="w-full min-h-[3.75rem] text-sm uppercase tracking-[0.24em]"
+                onClick={scoreDelivery}
+                disabled={scoringDisabled}
+              >
+                {busy ? "Saving..." : "Record ball"}
+              </PrimaryButton>
+            </div>
+
+            <div className="hidden md:grid gap-4 lg:grid-cols-[1.35fr_0.65fr]">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">
                   Runs
@@ -2653,7 +3259,14 @@ function ScoringView({
                     </p>
                     <select
                       value={extraType}
-                      onChange={(event) => setExtraType(event.target.value)}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        setExtraType(value);
+                        if (value !== "NoBall") {
+                          setNoBallReason("");
+                          setIsBouncer(false);
+                        }
+                      }}
                       className="input mt-3 w-full"
                       disabled={scoringDisabled}
                     >
@@ -2697,7 +3310,11 @@ function ScoringView({
                   </p>
                   <select
                     value={dismissalType}
-                    onChange={(event) => setDismissalType(event.target.value)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setDismissalType(value);
+                      setDismissedBatsmanPosition("");
+                    }}
                     className="input mt-3 w-full"
                     disabled={!isWicket || scoringDisabled}
                   >
@@ -2708,6 +3325,24 @@ function ScoringView({
                     ))}
                   </select>
                 </div>
+
+                {requiresRunOutDismissalPosition ? (
+                  <div className="mt-4">
+                    <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">
+                      Run out batsman
+                    </p>
+                    <select
+                      value={dismissedBatsmanPosition}
+                      onChange={(event) => setDismissedBatsmanPosition(event.target.value)}
+                      className="input mt-3 w-full"
+                      disabled={scoringDisabled}
+                    >
+                      <option value="">Select dismissed batsman</option>
+                      <option value="STRIKER">Striker</option>
+                      <option value="NON_STRIKER">Non-striker</option>
+                    </select>
+                  </div>
+                ) : null}
 
                 <div className="mt-4">
                   <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">
@@ -2739,7 +3374,7 @@ function ScoringView({
                 </label>
 
                 <PrimaryButton className="mt-6 w-full" onClick={scoreDelivery} disabled={scoringDisabled}>
-                  Record ball
+                  {busy ? "Saving..." : "Record ball"}
                 </PrimaryButton>
               </div>
             </div>

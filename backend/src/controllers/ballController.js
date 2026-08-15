@@ -2,24 +2,18 @@ const Ball = require("../models/Ball");
 const Match = require("../models/Match");
 const Player = require("../models/Player");
 const { endMatch } = require("../utils/matchUtils");
-
-function normalizeExtraType(value) {
-    const normalized = String(value || "None").replace(/\s+/g, "").toLowerCase();
-
-    if (normalized === "wide") return "Wide";
-    if (normalized === "noball") return "NoBall";
-    if (normalized === "bye") return "Bye";
-    if (normalized === "legbye") return "LegBye";
-
-    return "None";
-}
+const {
+    buildCommentary,
+    DismissedBatsmanPositions,
+    isLegalDelivery,
+    normalizeDismissedBatsmanPosition,
+    normalizeExtraType,
+    normalizeNoBallReason,
+    resolveRunOutState
+} = require("../utils/deliveryEngine");
 
 function normalizeDismissalType(value) {
     return String(value || "").trim();
-}
-
-function isLegalDelivery(extraType) {
-    return extraType !== "Wide" && extraType !== "NoBall";
 }
 
 function isBowlerDismissal(dismissalType) {
@@ -122,12 +116,14 @@ async function scoreBall(req, res) {
             dismissalType,
             fielder,
             isBouncer,
-            noBallReason
+            noBallReason,
+            dismissedBatsmanPosition
         } = req.body;
         runsOffBat = runsOffBat || 0;
         extraRuns = extraRuns || 0;
         isWicket = isWicket || false;
         extraType = normalizeExtraType(extraType);
+        noBallReason = normalizeNoBallReason(noBallReason);
         const match = await Match.findById(matchId);
         if(!match){
             return res.status(404).json({
@@ -182,14 +178,14 @@ async function scoreBall(req, res) {
         if (isBouncer && bouncerCount >= 1) {
             extraType = "NoBall";
             extraRuns = 1;
-            noBallReason = "Second Bouncer";
+            noBallReason = "SECOND_BOUNCER";
         }
-        if (noBallReason === "Height") {
+        if (noBallReason === "HEIGHT") {
             extraType = "NoBall";
             extraRuns = 1;
         }
 
-        if (noBallReason === "Overstep") {
+        if (noBallReason === "OVERSTEP") {
             extraType = "NoBall";
             extraRuns = 1;
         }
@@ -201,6 +197,19 @@ async function scoreBall(req, res) {
         ) {
             isWicket = false;
             dismissalType = null;
+        }
+
+        const normalizedDismissalType = normalizeDismissalType(dismissalType);
+        const isRunOut = normalizedDismissalType === "Run Out";
+        const normalizedDismissedBatsmanPosition = isRunOut
+            ? normalizeDismissedBatsmanPosition(dismissedBatsmanPosition)
+            : null;
+
+        if (isRunOut && !normalizedDismissedBatsmanPosition) {
+            return res.status(400).json({
+                success: false,
+                message: "Select whether the striker or non-striker was run out"
+            });
         }
 
         const nextFreeHit = extraType === "NoBall";
@@ -220,7 +229,20 @@ async function scoreBall(req, res) {
                 message: "Bowler not found"
             });
         }
-        
+
+        const nonStriker = match.matchState.nonStriker
+            ? await Player.findById(match.matchState.nonStriker)
+            : null;
+
+        const resolvedRunOutState = isRunOut
+            ? resolveRunOutState({
+                strikerId: match.matchState.striker,
+                nonStrikerId: match.matchState.nonStriker,
+                dismissedBatsmanPosition: normalizedDismissedBatsmanPosition,
+                runsCompleted: Number(runsOffBat || 0)
+            })
+            : null;
+
         const ballRecord = await Ball.create({
             match: match._id,
             innings: match.matchState.innings,
@@ -237,12 +259,101 @@ async function scoreBall(req, res) {
             dismissalType,
             isBouncer,
             noBallReason,
+            dismissedBatsman:
+                resolvedRunOutState?.dismissedBatsmanId || null,
+            dismissedBatsmanPosition: normalizedDismissedBatsmanPosition,
+            runsCompleted: isRunOut ? Number(runsOffBat || 0) : 0,
+            battersCrossed: isRunOut ? Number(runsOffBat || 0) % 2 === 1 : false,
             isFreeHit: wasFreeHit,
             isLegalDelivery: isLegalDelivery(extraType),
             totalRuns: runsOffBat + extraRuns,
             creditedToBowler: isWicket && isBowlerDismissal(dismissalType)
 
         });
+
+        const sendScoreResponse = async (message) => {
+            const [currentStriker, currentNonStriker, currentBowler] = await Promise.all([
+                match.matchState.striker ? Player.findById(match.matchState.striker) : null,
+                match.matchState.nonStriker ? Player.findById(match.matchState.nonStriker) : null,
+                match.matchState.currentBowler ? Player.findById(match.matchState.currentBowler) : null
+            ]);
+            const currentOverBalls = await Ball.find({
+                match: match._id,
+                innings: match.matchState.innings,
+                over: battingTeam.completedOvers
+            }).sort({ ball: 1 });
+            const dismissedBatsmanName = isRunOut
+                ? (resolvedRunOutState?.dismissedBatsmanId === match.matchState.striker
+                    ? batsman.name
+                    : resolvedRunOutState?.dismissedBatsmanId === match.matchState.nonStriker
+                        ? nonStriker?.name || ""
+                        : "")
+                : batsman.name;
+            const commentaryText = buildCommentary({
+                runsOffBat,
+                extraType,
+                extraRuns,
+                isWicket,
+                dismissalType: normalizedDismissalType,
+                noBallReason,
+                dismissedBatsmanName,
+                dismissedBatsmanPosition: normalizedDismissedBatsmanPosition
+            });
+
+            return res.status(201).json({
+                success: true,
+                message,
+                ball: {
+                    ...ballRecord.toObject(),
+                    commentaryText,
+                    batsmanName: batsman.name,
+                    bowlerName: bowler.name,
+                    dismissedBatsmanName
+                },
+                matchSnapshot: {
+                    status: match.status,
+                    target: match.target,
+                    winner: match.winner,
+                    winningMargin: match.winningMargin,
+                    matchState: {
+                        innings: match.matchState.innings,
+                        battingTeam: match.matchState.battingTeam,
+                        bowlingTeam: match.matchState.bowlingTeam,
+                        awaitingNextBatsman: match.matchState.awaitingNextBatsman,
+                        isFreeHit: match.matchState.isFreeHit
+                    },
+                    battingTeam: {
+                        score: battingTeam.score,
+                        wickets: battingTeam.wickets,
+                        completedOvers: battingTeam.completedOvers,
+                        ballsInCurrentOver: battingTeam.ballsInCurrentOver,
+                        extras: battingTeam.extras
+                    }
+                },
+                scoreboard: {
+                    striker: currentStriker
+                        ? { _id: String(currentStriker._id), name: currentStriker.name }
+                        : null,
+                    nonStriker: currentNonStriker
+                        ? { _id: String(currentNonStriker._id), name: currentNonStriker.name }
+                        : null,
+                    bowler: currentBowler
+                        ? { _id: String(currentBowler._id), name: currentBowler.name }
+                        : null
+                },
+                currentOver: {
+                    over: battingTeam.completedOvers,
+                    balls: currentOverBalls
+                },
+                commentary: [
+                    {
+                        innings: ballRecord.innings,
+                        over: `${ballRecord.over}.${ballRecord.ball}`,
+                        commentary: commentaryText
+                    }
+                ]
+            });
+        };
         battingTeam.score += runsOffBat + extraRuns;
 
         battingTeam.extras = battingTeam.extras || {};
@@ -262,18 +373,13 @@ async function scoreBall(req, res) {
         if (match.matchState.innings === 2 && match.target && battingTeam.score >= match.target) {
             await endMatch(match);
 
-            return res.status(201).json({
-                success: true,
-                message: "Match completed",
-                ball: ballRecord
-            });
+            return sendScoreResponse("Match completed");
         }
 
         const totalRunsThisBall = runsOffBat + extraRuns;
+        const shouldSwapEnds = !isRunOut && totalRunsThisBall % 2 !== 0;
 
-       
-
-        if (totalRunsThisBall % 2 !== 0) {
+        if (shouldSwapEnds) {
             const temp = match.matchState.striker;
             match.matchState.striker = match.matchState.nonStriker;
             match.matchState.nonStriker = temp;
@@ -289,7 +395,7 @@ async function scoreBall(req, res) {
         if (isWicket) {
             battingTeam.wickets++;
 
-            switch (dismissalType) {
+            switch (normalizedDismissalType) {
 
                 case "Bowled":
                 case "Caught":
@@ -329,11 +435,7 @@ async function scoreBall(req, res) {
             }
             await match.save();
 
-            return res.status(201).json({
-                success: true,
-                message: "Innings ended successfully",
-                ball: ballRecord
-            });
+            return sendScoreResponse("Innings ended successfully");
         }
 
 
@@ -358,11 +460,7 @@ async function scoreBall(req, res) {
 
                 await match.save();
 
-                return res.status(201).json({
-                    success: true,
-                    message: "Innings ended successfully",
-                    ball: ballRecord
-                });
+                return sendScoreResponse("Innings ended successfully");
             }
         }
 
@@ -377,11 +475,7 @@ async function scoreBall(req, res) {
         
         
         await match.save();
-        return res.status(201).json({
-            success: true,
-            message: "Ball recorded successfully",
-            ball: ballRecord
-        });
+        return sendScoreResponse("Ball recorded successfully");
 
     } catch (error) {
         res.status(500).json({
